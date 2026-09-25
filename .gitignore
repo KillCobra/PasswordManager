@@ -31,3 +31,7 @@ local.properties
 .idea/
 *.iml
 *.log
+
+# Local/backup vault artifacts (the real app vault.vlt stays tracked)
+vault.local-backup.vlt
+test_*.vlt
