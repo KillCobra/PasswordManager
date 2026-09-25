@@ -10,6 +10,10 @@ name: Android Debug APK
 # This is a debug build: it is signed with the standard Android debug key,
 # so it installs on devices/emulators without extra signing setup. It is
 # not suitable for Play Store upload.
+#
+# Note: ubuntu-latest ships with the Android SDK preinstalled (ANDROID_HOME /
+# ANDROID_SDK_ROOT are set), so we install the required NDK with the
+# preinstalled sdkmanager rather than relying on a third-party setup action.
 
 on:
   workflow_dispatch:
@@ -36,6 +40,9 @@ jobs:
   build-debug-apk:
     runs-on: ubuntu-latest
 
+    env:
+      NDK_VERSION: "25.2.9519653"
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -46,14 +53,22 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Install NDK and accept licenses
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "Using Android SDK at: $SDK_ROOT"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "ndk;${NDK_VERSION}"
 
-      - name: Install NDK 25.2.9519653
-        run: sdkmanager "ndk;25.2.9519653"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Make gradlew executable
+        working-directory: android
+        run: chmod +x ./gradlew
 
       - name: Build debug APK
         working-directory: android
