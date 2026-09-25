@@ -1,0 +1,33 @@
+# Local vault data and native executable output
+vault.vlt
+password_manager.exe
+
+# CMake and native build output
+/build-*/
+/build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.exe
+
+# Android and Gradle build output
+.gradle/
+**/build/
+**/.cxx/
+*.apk
+*.aab
+*.aar
+
+# Machine-local IDE and Android configuration
+local.properties
+.idea/
+*.iml
+*.log

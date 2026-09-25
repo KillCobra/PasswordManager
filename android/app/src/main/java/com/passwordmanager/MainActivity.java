@@ -1,0 +1,333 @@
+
+package com.passwordmanager;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.LinearLayout;
+import android.widget.ListView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+
+public class MainActivity extends Activity {
+
+    private String vaultPath;
+    private ListView listView;
+    private FloatingActionButton fabAdd;
+    private FloatingActionButton fabSearch;
+    private LinearLayout searchBar;
+    private EditText editSearch;
+    private ImageButton btnClearSearch;
+    private CredentialAdapter adapter;
+    private final List<CredentialEntry> credentials = new ArrayList<>();
+    private boolean searchVisible = false;
+
+    private static class CredentialEntry {
+        int id;
+        String url;
+        String username;
+        String password;
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        vaultPath = new File(getFilesDir(), "vault.vlt").getAbsolutePath();
+
+        listView = findViewById(R.id.credential_list);
+        fabAdd = findViewById(R.id.fab_add);
+        fabSearch = findViewById(R.id.fab_search);
+        searchBar = findViewById(R.id.search_bar);
+        editSearch = findViewById(R.id.edit_search);
+        btnClearSearch = findViewById(R.id.btn_clear_search);
+
+        adapter = new CredentialAdapter();
+        listView.setAdapter(adapter);
+
+        listView.setOnItemClickListener((parent, view, position, id) -> showDetailDialog(position));
+        listView.setOnItemLongClickListener((parent, view, position, id) -> {
+            copyPassword(position);
+            return true;
+        });
+
+        fabAdd.setOnClickListener(v -> showAddDialog());
+        fabSearch.setOnClickListener(v -> toggleSearch());
+
+        btnClearSearch.setOnClickListener(v -> {
+            editSearch.setText("");
+            toggleSearch();
+            refreshCredentials();
+        });
+
+        editSearch.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                performSearch(s.toString());
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
+
+        // Hide UI until unlocked
+        listView.setVisibility(View.GONE);
+        fabAdd.setVisibility(View.GONE);
+        fabSearch.setVisibility(View.GONE);
+
+        showMasterPasswordDialog();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        NativeLib.nativeLockVault();
+    }
+
+    /* ─── Search ──────────────────────────────────────────────────────────── */
+
+    private void toggleSearch() {
+        searchVisible = !searchVisible;
+        searchBar.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
+        if (searchVisible) {
+            editSearch.requestFocus();
+        } else {
+            editSearch.setText("");
+        }
+    }
+
+    private void performSearch(String query) {
+        credentials.clear();
+        if (query.isEmpty()) {
+            // Show all
+            String[] raw = NativeLib.nativeGetAllCredentials();
+            if (raw != null) {
+                parseCredentials(raw);
+            }
+        } else {
+            // Search by URL
+            String[] raw = NativeLib.nativeSearchCredentials(query);
+            if (raw != null) {
+                parseCredentials(raw);
+            }
+        }
+        adapter.notifyDataSetChanged();
+    }
+
+    /* ─── Master Password ─────────────────────────────────────────────────── */
+
+    private void showMasterPasswordDialog() {
+        View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_master_password, null);
+        EditText editPassword = dialogView.findViewById(R.id.edit_master_password);
+
+        boolean vaultExists = new File(vaultPath).exists();
+
+        new AlertDialog.Builder(this)
+                .setTitle(vaultExists ? "Unlock Vault" : "Create Vault")
+                .setView(dialogView)
+                .setCancelable(false)
+                .setPositiveButton("Unlock", (dialog, which) -> {
+                    String password = editPassword.getText().toString();
+                    if (password.isEmpty()) {
+                        Toast.makeText(this, "Password cannot be empty", Toast.LENGTH_SHORT).show();
+                        showMasterPasswordDialog();
+                        return;
+                    }
+
+                    boolean success;
+                    if (!vaultExists) {
+                        success = NativeLib.nativeCreateVault(vaultPath, password);
+                        if (success) {
+                            success = NativeLib.nativeUnlockVault(vaultPath, password);
+                        }
+                    } else {
+                        success = NativeLib.nativeUnlockVault(vaultPath, password);
+                    }
+
+                    if (success) {
+                        listView.setVisibility(View.VISIBLE);
+                        fabAdd.setVisibility(View.VISIBLE);
+                        fabSearch.setVisibility(View.VISIBLE);
+                        refreshCredentials();
+                    } else {
+                        Toast.makeText(this, "Failed to unlock vault", Toast.LENGTH_SHORT).show();
+                        showMasterPasswordDialog();
+                    }
+                })
+                .setNegativeButton("Exit", (dialog, which) -> finish())
+                .show();
+    }
+
+    /* ─── Credential Management ───────────────────────────────────────────── */
+
+    private void refreshCredentials() {
+        credentials.clear();
+        String[] raw = NativeLib.nativeGetAllCredentials();
+        if (raw != null) {
+            parseCredentials(raw);
+        }
+        adapter.notifyDataSetChanged();
+    }
+
+    private void parseCredentials(String[] raw) {
+        for (String entry : raw) {
+            String[] parts = entry.split("\\|", 4);
+            if (parts.length == 4) {
+                CredentialEntry ce = new CredentialEntry();
+                ce.id = Integer.parseInt(parts[0]);
+                ce.url = parts[1];
+                ce.username = parts[2];
+                ce.password = parts[3];
+                credentials.add(ce);
+            }
+        }
+    }
+
+    private void showAddDialog() {
+        showCredentialDialog("Add Credential", "", "", "", (url, username, password) -> {
+            boolean ok = NativeLib.nativeAddCredential(url, username, password);
+            if (ok) {
+                refreshCredentials();
+            } else {
+                Toast.makeText(this, "Failed to add credential", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void showEditDialog(int position) {
+        CredentialEntry ce = credentials.get(position);
+        showCredentialDialog("Edit Credential", ce.url, ce.username, ce.password,
+                (url, username, password) -> {
+                    boolean ok = NativeLib.nativeEditCredential(ce.id, url, username, password);
+                    if (ok) {
+                        refreshCredentials();
+                    } else {
+                        Toast.makeText(this, "Failed to edit credential", Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+
+    private void showDetailDialog(int position) {
+        CredentialEntry ce = credentials.get(position);
+
+        View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_credential, null);
+        EditText editUrl = dialogView.findViewById(R.id.edit_url);
+        EditText editUsername = dialogView.findViewById(R.id.edit_username);
+        EditText editPassword = dialogView.findViewById(R.id.edit_password);
+
+        editUrl.setText(ce.url);
+        editUsername.setText(ce.username);
+        editPassword.setText(ce.password);
+        editUrl.setEnabled(false);
+        editUsername.setEnabled(false);
+        editPassword.setEnabled(false);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Credential Details")
+                .setView(dialogView)
+                .setPositiveButton("Copy Password", (dialog, which) -> copyToClipboard(ce.password))
+                .setNeutralButton("Edit", (dialog, which) -> showEditDialog(position))
+                .setNegativeButton("Delete", (dialog, which) -> {
+                    NativeLib.nativeDeleteCredential(ce.id);
+                    refreshCredentials();
+                })
+                .show();
+    }
+
+    private void showCredentialDialog(String title, String url, String username, String password,
+                                      CredentialCallback callback) {
+        View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_credential, null);
+        EditText editUrl = dialogView.findViewById(R.id.edit_url);
+        EditText editUsername = dialogView.findViewById(R.id.edit_username);
+        EditText editPassword = dialogView.findViewById(R.id.edit_password);
+
+        editUrl.setText(url);
+        editUsername.setText(username);
+        editPassword.setText(password);
+
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(dialogView)
+                .setPositiveButton("Save", (dialog, which) -> {
+                    String u = editUrl.getText().toString();
+                    String un = editUsername.getText().toString();
+                    String pw = editPassword.getText().toString();
+                    callback.onSave(u, un, pw);
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /* ─── Clipboard ───────────────────────────────────────────────────────── */
+
+    private void copyPassword(int position) {
+        CredentialEntry ce = credentials.get(position);
+        copyToClipboard(ce.password);
+        Toast.makeText(this, "Password copied", Toast.LENGTH_SHORT).show();
+    }
+
+    private void copyToClipboard(String text) {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null) {
+            clipboard.setPrimaryClip(ClipData.newPlainText("credential", text));
+        }
+    }
+
+    /* ─── Interfaces & Adapter ────────────────────────────────────────────── */
+
+    private interface CredentialCallback {
+        void onSave(String url, String username, String password);
+    }
+
+    private class CredentialAdapter extends BaseAdapter {
+        @Override
+        public int getCount() {
+            return credentials.size();
+        }
+
+        @Override
+        public Object getItem(int position) {
+            return credentials.get(position);
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return credentials.get(position).id;
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            if (convertView == null) {
+                convertView = LayoutInflater.from(MainActivity.this)
+                        .inflate(R.layout.item_credential, parent, false);
+            }
+            CredentialEntry ce = credentials.get(position);
+            TextView textUrl = convertView.findViewById(R.id.text_url);
+            TextView textUsername = convertView.findViewById(R.id.text_username);
+            textUrl.setText(ce.url);
+            textUsername.setText(ce.username);
+            return convertView;
+        }
+    }
+}
