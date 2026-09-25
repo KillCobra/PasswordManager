@@ -8,7 +8,10 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.os.Bundle;
 import android.text.Editable;
+import android.text.InputType;
 import android.text.TextWatcher;
+import android.text.method.HideReturnsTransformationMethod;
+import android.text.method.PasswordTransformationMethod;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -242,6 +245,28 @@ public class MainActivity extends Activity {
         editUrl.setEnabled(false);
         editUsername.setEnabled(false);
         editPassword.setEnabled(false);
+
+        // Mask the password with dots by default. Applying the transformation
+        // method explicitly (rather than relying on inputType alone) ensures the
+        // field stays masked even though it is disabled/read-only here.
+        editPassword.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        editPassword.setTransformationMethod(PasswordTransformationMethod.getInstance());
+
+        // Let the user reveal/hide the password by tapping the field.
+        // Tapping toggles between masked dots and the plaintext value.
+        editPassword.setEnabled(true);
+        editPassword.setFocusable(false);
+        editPassword.setFocusableInTouchMode(false);
+        editPassword.setCursorVisible(false);
+        editPassword.setLongClickable(false);
+        final boolean[] revealed = { false };
+        editPassword.setOnClickListener(v -> {
+            revealed[0] = !revealed[0];
+            editPassword.setTransformationMethod(revealed[0]
+                    ? HideReturnsTransformationMethod.getInstance()
+                    : PasswordTransformationMethod.getInstance());
+        });
 
         new AlertDialog.Builder(this)
                 .setTitle("Credential Details")

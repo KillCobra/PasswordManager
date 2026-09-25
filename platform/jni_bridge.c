@@ -183,13 +183,13 @@ Java_com_passwordmanager_NativeLib_nativeUnlockVault(
 
     size_t pw_len = strlen(password);
 
-    /* Load vault file */
+    /* Load vault file. A read/not-found error is NOT a wrong-password event,
+     * so it must not increment the auth-failure counter. */
     uint8_t *file_data = NULL;
     size_t file_len = 0;
     StoreResult sr = store_load(path, &file_data, &file_len);
     if (sr != STORE_OK) {
         platform_secure_zero(password, sizeof(password));
-        master_password_record_failure();
         return JNI_FALSE;
     }
 
@@ -197,7 +197,6 @@ Java_com_passwordmanager_NativeLib_nativeUnlockVault(
     if (file_len < VAULT_HEADER_SIZE) {
         free(file_data);
         platform_secure_zero(password, sizeof(password));
-        master_password_record_failure();
         return JNI_FALSE;
     }
 
@@ -214,8 +213,9 @@ Java_com_passwordmanager_NativeLib_nativeUnlockVault(
     platform_secure_zero(password, sizeof(password));
 
     if (er != ENC_OK) {
+        /* Key derivation failure is a system/resource error, not a wrong
+         * password - do not count it as an auth failure. */
         free(file_data);
-        master_password_record_failure();
         return JNI_FALSE;
     }
 
@@ -226,7 +226,12 @@ Java_com_passwordmanager_NativeLib_nativeUnlockVault(
 
     if (sr != STORE_OK) {
         enc_secure_zero(&key, sizeof(key));
-        master_password_record_failure();
+        /* Only a GCM tag mismatch (STORE_ERR_AUTH) means a wrong master
+         * password; count that (without a blocking sleep on this thread).
+         * Real corruption / other errors are not auth failures. */
+        if (sr == STORE_ERR_AUTH) {
+            master_password_record_failure_no_delay();
+        }
         return JNI_FALSE;
     }
 

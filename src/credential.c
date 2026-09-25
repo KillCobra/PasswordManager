@@ -27,11 +27,23 @@ bool master_password_validate(const char *password, size_t len)
     return len >= MASTER_PASSWORD_MIN_LEN;
 }
 
-void master_password_record_failure(void)
+void master_password_record_failure_no_delay(void)
 {
     s_consecutive_failures++;
-    uint32_t delay_ms = s_consecutive_failures * 1000;
-    platform_sleep_ms(delay_ms);
+}
+
+uint32_t master_password_get_delay_ms(void)
+{
+    return s_consecutive_failures * 1000;
+}
+
+void master_password_record_failure(void)
+{
+    /* Increment the counter, then enforce the progressive delay on the
+     * calling thread. Kept for callers/tests that rely on the blocking
+     * behavior; UI code should prefer the _no_delay variant. */
+    master_password_record_failure_no_delay();
+    platform_sleep_ms(master_password_get_delay_ms());
 }
 
 void master_password_record_success(void)

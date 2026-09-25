@@ -607,6 +607,29 @@ static INT_PTR ShowMasterPasswordDialog(HWND hwndParent, MasterPwDlgData *data)
     );
 }
 
+/* ─── Responsive Wait ─────────────────────────────────────────────────────── */
+
+/**
+ * Wait for the given number of milliseconds while keeping the UI responsive.
+ * Unlike a plain Sleep(), this keeps pumping the message queue so the window
+ * continues to repaint and does not appear "not responding" during the
+ * progressive authentication delay.
+ */
+static void UI_ResponsiveWait(uint32_t ms)
+{
+    if (ms == 0) return;
+
+    DWORD start = GetTickCount();
+    while ((GetTickCount() - start) < ms) {
+        MSG msg;
+        while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+        Sleep(10); /* Brief idle to avoid busy-spinning */
+    }
+}
+
 static bool UI_UnlockVault(HWND hwndParent)
 {
     MasterPwDlgData dlg_data = {0};
@@ -618,11 +641,9 @@ static bool UI_UnlockVault(HWND hwndParent)
             return false;
         }
 
-        /* Enforce progressive delay */
-        uint32_t failures = master_password_get_failure_count();
-        if (failures > 0) {
-            platform_sleep_ms(failures * 1000);
-        }
+        /* Note: the progressive delay is enforced AFTER a failed attempt
+         * (below), so there is no pre-emptive sleep here. This avoids applying
+         * the delay twice. */
 
         /* Load vault file */
         uint8_t *file_data = NULL;
@@ -667,18 +688,40 @@ static bool UI_UnlockVault(HWND hwndParent)
             enc_secure_zero(dlg_data.password, sizeof(dlg_data.password));
             g_app.is_unlocked = true;
             return true;
-        } else {
-            master_password_record_failure();
+        } else if (sr == STORE_ERR_AUTH) {
+            /* Wrong master password (GCM tag mismatch). Record the failure
+             * (without an internal blocking sleep), then enforce the
+             * progressive delay with a responsive wait so the UI thread does
+             * not freeze. */
+            master_password_record_failure_no_delay();
             enc_secure_zero(dlg_data.password, sizeof(dlg_data.password));
             enc_secure_zero(&g_app.derived_key, sizeof(DerivedKey));
 
             uint32_t new_failures = master_password_get_failure_count();
-            char err_msg[128];
+            char err_msg[160];
             snprintf(err_msg, sizeof(err_msg),
-                     "Incorrect password. Next attempt delayed %u second(s).",
+                     "Incorrect master password. Next attempt delayed %u second(s).",
                      new_failures);
             MessageBoxA(hwndParent, err_msg, "Authentication Failed",
                         MB_OK | MB_ICONWARNING);
+
+            /* Enforce the delay after the user dismisses the message, keeping
+             * the window responsive during the wait. */
+            UI_ResponsiveWait(master_password_get_delay_ms());
+            /* Loop and prompt again */
+        } else {
+            /* Genuine corruption or I/O error - not a password problem.
+             * Do not count as an auth failure; report accurately and stop. */
+            enc_secure_zero(dlg_data.password, sizeof(dlg_data.password));
+            enc_secure_zero(&g_app.derived_key, sizeof(DerivedKey));
+
+            const char *msg =
+                (sr == STORE_ERR_CORRUPT)
+                    ? "The vault file is damaged and could not be read.\n"
+                      "This is not a password problem."
+                    : "Failed to read the vault file.";
+            MessageBoxA(hwndParent, msg, "Vault Error", MB_OK | MB_ICONERROR);
+            return false;
         }
     }
 }

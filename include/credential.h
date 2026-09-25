@@ -64,8 +64,20 @@ bool master_password_validate(const char *password, size_t len);
  * Record a failed authentication attempt and enforce progressive delay.
  * Increments the consecutive failure counter and sleeps for
  * (consecutive_failures * 1) seconds using platform_sleep_ms().
+ *
+ * Note: this blocks the calling thread for the delay. UI code that must stay
+ * responsive should instead use master_password_record_failure_no_delay() to
+ * update the counter and then enforce the delay via
+ * master_password_get_delay_ms() on a non-UI thread or with a responsive wait.
  */
 void master_password_record_failure(void);
+
+/**
+ * Record a failed authentication attempt WITHOUT sleeping.
+ * Increments the consecutive failure counter only. The caller is responsible
+ * for enforcing the progressive delay (see master_password_get_delay_ms()).
+ */
+void master_password_record_failure_no_delay(void);
 
 /**
  * Record a successful authentication, resetting the failure counter to zero.
@@ -76,6 +88,12 @@ void master_password_record_success(void);
  * Get the current number of consecutive authentication failures.
  */
 uint32_t master_password_get_failure_count(void);
+
+/**
+ * Get the progressive delay, in milliseconds, that should be enforced for the
+ * current consecutive-failure count (consecutive_failures * 1000 ms).
+ */
+uint32_t master_password_get_delay_ms(void);
 
 /* ─── Credential CRUD ─────────────────────────────────────────────────────── */
 

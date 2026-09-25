@@ -42,7 +42,8 @@ typedef enum {
     STORE_ERR_CORRUPT,
     STORE_ERR_WRITE_FAILED,
     STORE_ERR_DISK_FULL,
-    STORE_ERR_PERMISSION
+    STORE_ERR_PERMISSION,
+    STORE_ERR_AUTH        /* Authentication failed: wrong master password or tampered data */
 } StoreResult;
 
 /* ─── File I/O Functions ──────────────────────────────────────────────────── */

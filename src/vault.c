@@ -504,8 +504,11 @@ StoreResult vault_deserialize(const uint8_t *data, size_t len,
                               plaintext, &pt_len);
 
         if (enc_res == ENC_ERR_INTEGRITY_FAILED) {
+            /* GCM tag mismatch: almost always a wrong master password,
+             * otherwise the file was tampered with. Report as auth failure
+             * so callers can show an accurate message rather than "corrupt". */
             free(plaintext);
-            return STORE_ERR_CORRUPT;
+            return STORE_ERR_AUTH;
         }
         if (enc_res != ENC_OK) {
             free(plaintext);
