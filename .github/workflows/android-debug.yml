@@ -1,0 +1,67 @@
+name: Android Debug APK
+
+# Builds a debug APK of the Android app and uploads it as a downloadable
+# CI artifact for testing (sideload via `adb install app-debug.apk`).
+#
+# Triggers:
+#   - Manually from the Actions tab (workflow_dispatch)
+#   - On pushes / PRs that touch the app or the native core it links against
+#
+# This is a debug build: it is signed with the standard Android debug key,
+# so it installs on devices/emulators without extra signing setup. It is
+# not suitable for Play Store upload.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - "android/**"
+      - "src/**"
+      - "include/**"
+      - "platform/**"
+      - "vendor/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/android-debug.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - "src/**"
+      - "include/**"
+      - "platform/**"
+      - "vendor/**"
+      - "CMakeLists.txt"
+
+jobs:
+  build-debug-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK 25.2.9519653
+        run: sdkmanager "ndk;25.2.9519653"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

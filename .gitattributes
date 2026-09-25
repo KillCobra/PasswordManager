@@ -1,0 +1,13 @@
+# Shell scripts and CI files must keep LF line endings so they run on Linux
+# CI runners regardless of the contributor's platform / git autocrlf setting.
+android/gradlew text eol=lf
+*.sh            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+# Windows batch scripts use CRLF
+*.bat           text eol=crlf
+
+# Treat vault files and the wrapper jar as binary (never line-ending munged)
+*.vlt           binary
+*.jar           binary

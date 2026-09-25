@@ -1,0 +1,61 @@
+name: Release Windows
+
+# Build password_manager.exe and publish it to a GitHub Release.
+#
+# How to cut a release "whenever you want":
+#   1. Tag a commit:   git tag v1.0.0
+#   2. Push the tag:   git push origin v1.0.0
+#   The workflow then builds the exe and attaches it to a Release for that tag.
+#
+# You can also trigger it manually from the Actions tab (workflow_dispatch);
+# a manual run builds and uploads the exe as a run artifact but does not
+# create a Release (no tag to attach it to).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required to create the Release and upload assets
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build password_manager.exe (MSVC / release)
+        shell: cmd
+        run: build.bat msvc release
+
+      - name: Verify the executable was produced
+        shell: pwsh
+        run: |
+          if (-not (Test-Path password_manager.exe)) {
+            Write-Error "password_manager.exe was not produced by the build."
+            exit 1
+          }
+          Get-Item password_manager.exe | Format-List Name, Length
+
+      # Always keep a copy on the run itself, tag or not.
+      - name: Upload exe as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: password_manager-exe
+          path: password_manager.exe
+          if-no-files-found: error
+
+      # Only when triggered by a version tag: publish a GitHub Release.
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: password_manager.exe
+          generate_release_notes: true

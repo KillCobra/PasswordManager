@@ -32,6 +32,6 @@ local.properties
 *.iml
 *.log
 
-# Local/backup vault artifacts (the real app vault.vlt stays tracked)
+# Local/backup vault artifacts (vault data is local-only, never committed)
 vault.local-backup.vlt
 test_*.vlt
