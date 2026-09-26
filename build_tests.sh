@@ -13,7 +13,7 @@ CC="${CC:-cc}"
   tests/test_main.c tests/test_encryption.c tests/test_credentials.c \
   tests/test_validation.c tests/test_sync.c tests/test_vault.c tests/test_crypto_kat.c \
   src/encryption.c src/vault.c src/credential.c src/sync.c \
-  platform/platform_android.c \
+  tests/platform_test_posix.c \
   vendor/argon2/argon2.c vendor/argon2/core.c vendor/argon2/ref.c \
   vendor/argon2/blake2b.c vendor/argon2/encoding.c \
   vendor/aesgcm/aes.c vendor/aesgcm/gcm.c \
