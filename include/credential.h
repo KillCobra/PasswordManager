@@ -95,6 +95,13 @@ uint32_t master_password_get_failure_count(void);
  */
 uint32_t master_password_get_delay_ms(void);
 
+/**
+ * Seed the in-memory consecutive-failure counter from a persisted value
+ * (e.g. loaded from the vault header at startup). Used to enforce the
+ * progressive lockout across app restarts.
+ */
+void master_password_set_failure_count(uint32_t count);
+
 /* ─── Credential CRUD ─────────────────────────────────────────────────────── */
 
 CredResult cred_add(Vault *vault, const char *url,

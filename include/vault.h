@@ -78,6 +78,43 @@ StoreResult store_save(const char *path, const uint8_t *data, size_t len);
  */
 bool store_exists(const char *path);
 
+/* ─── Persistent Lockout State (plaintext header, no key needed) ──────────── */
+
+/*
+ * The vault header has 16 reserved bytes at offset 48. We use them to persist
+ * the brute-force lockout counter across app restarts, so closing/reopening the
+ * app does not reset the progressive delay. These bytes live OUTSIDE the
+ * encrypted body, so they can be read/written without the master key.
+ *
+ * Layout within the reserved region:
+ *   offset 48: failure count      (u32, LE)
+ *   offset 52: last-fail unix secs (u64, LE)
+ *   offset 60: reserved (zero)
+ */
+
+/**
+ * Read the persisted lockout counter from a vault file's header.
+ * On any error (missing file, too small, bad magic), outputs 0/0 and returns false.
+ *
+ * @param path            Path to the vault file
+ * @param out_count       Output: consecutive failure count (may be NULL)
+ * @param out_last_fail   Output: last-fail unix timestamp (may be NULL)
+ * @return true on success, false otherwise
+ */
+bool store_read_lockout(const char *path, uint32_t *out_count, uint64_t *out_last_fail);
+
+/**
+ * Write the lockout counter into a vault file's header reserved bytes,
+ * in place, without touching the encrypted body or tag. Requires an existing
+ * valid vault file.
+ *
+ * @param path        Path to the vault file
+ * @param count       Consecutive failure count to store
+ * @param last_fail   Last-fail unix timestamp to store
+ * @return STORE_OK on success, error code otherwise
+ */
+StoreResult store_write_lockout(const char *path, uint32_t count, uint64_t last_fail);
+
 /* ─── Vault Serialization / Deserialization ───────────────────────────────── */
 
 /**

@@ -122,6 +122,49 @@ bool store_exists(const char *path)
     return platform_file_exists(path);
 }
 
+/* ─── Persistent Lockout State ────────────────────────────────────────────── */
+
+#define LOCKOUT_OFF_COUNT      48
+#define LOCKOUT_OFF_LASTFAIL   52
+
+bool store_read_lockout(const char *path, uint32_t *out_count, uint64_t *out_last_fail)
+{
+    if (out_count) *out_count = 0;
+    if (out_last_fail) *out_last_fail = 0;
+    if (path == NULL) return false;
+
+    uint8_t *data = NULL;
+    size_t len = 0;
+    if (store_load(path, &data, &len) != STORE_OK) {
+        return false;
+    }
+    /* store_load already validated magic + minimum header size. */
+    if (out_count)     *out_count     = read_u32_le(data + LOCKOUT_OFF_COUNT);
+    if (out_last_fail) *out_last_fail = read_u64_le(data + LOCKOUT_OFF_LASTFAIL);
+    free(data);
+    return true;
+}
+
+StoreResult store_write_lockout(const char *path, uint32_t count, uint64_t last_fail)
+{
+    if (path == NULL) return STORE_ERR_WRITE_FAILED;
+
+    uint8_t *data = NULL;
+    size_t len = 0;
+    StoreResult sr = store_load(path, &data, &len);
+    if (sr != STORE_OK) return sr;
+
+    /* Overwrite only the reserved lockout bytes in the plaintext header;
+     * the encrypted body and GCM tag are untouched (these bytes are not
+     * authenticated, so this does not invalidate the vault). */
+    write_u32_le(data + LOCKOUT_OFF_COUNT, count);
+    write_u64_le(data + LOCKOUT_OFF_LASTFAIL, last_fail);
+
+    sr = store_save(path, data, len);
+    free(data);
+    return sr;
+}
+
 /* ─── Internal: Credential Serialization ──────────────────────────────────── */
 
 /**

@@ -183,6 +183,15 @@ Java_com_passwordmanager_NativeLib_nativeUnlockVault(
 
     size_t pw_len = strlen(password);
 
+    /* Seed the lockout counter from the vault header so the progressive delay
+     * survives app restarts. */
+    {
+        uint32_t persisted = 0;
+        if (store_read_lockout(path, &persisted, NULL)) {
+            master_password_set_failure_count(persisted);
+        }
+    }
+
     /* Load vault file. A read/not-found error is NOT a wrong-password event,
      * so it must not increment the auth-failure counter. */
     uint8_t *file_data = NULL;
@@ -236,10 +245,13 @@ Java_com_passwordmanager_NativeLib_nativeUnlockVault(
     if (sr != STORE_OK) {
         enc_secure_zero(&key, sizeof(key));
         /* Only a GCM tag mismatch (STORE_ERR_AUTH) means a wrong master
-         * password; count that (without a blocking sleep on this thread).
-         * Real corruption / other errors are not auth failures. */
+         * password; count that (without a blocking sleep on this thread) and
+         * persist it so the lockout survives restart. Real corruption / other
+         * errors are not auth failures. */
         if (sr == STORE_ERR_AUTH) {
             master_password_record_failure_no_delay();
+            store_write_lockout(path, master_password_get_failure_count(),
+                                platform_time_unix());
         }
         return JNI_FALSE;
     }
@@ -259,6 +271,8 @@ Java_com_passwordmanager_NativeLib_nativeUnlockVault(
     g_vault_unlocked = true;
 
     master_password_record_success();
+    /* Clear the persisted lockout counter on success. */
+    store_write_lockout(g_vault_path, 0, 0);
     return JNI_TRUE;
 }
 

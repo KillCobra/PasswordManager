@@ -80,6 +80,19 @@ static bool vault_append_credential(Vault *vault, const Credential *cred)
 
 /* ─── Merge Logic Implementation ──────────────────────────────────────────── */
 
+/* Find any credential (including soft-deleted) by URL + username. */
+static Credential* find_any_by_content(Vault *vault, const char *url, const char *username)
+{
+    if (!vault || !vault->entries) return NULL;
+    for (uint32_t i = 0; i < vault->count; i++) {
+        if (strcmp(vault->entries[i].url, url) == 0 &&
+            strcmp(vault->entries[i].username, username) == 0) {
+            return &vault->entries[i];
+        }
+    }
+    return NULL;
+}
+
 SyncResult sync_merge(Vault *local, const Vault *remote,
                       bool is_initiator, SyncSummary *summary)
 {
@@ -87,11 +100,9 @@ SyncResult sync_merge(Vault *local, const Vault *remote,
         return SYNC_ERR_NETWORK;
     }
 
-    /* Initialize summary counts */
     summary->added = 0;
     summary->updated = 0;
-    summary->deleted = 0;
-    summary->deleted_id_count = 0;
+    summary->pending_delete_count = 0;
 
     /* Find the max ID in local vault so new entries get unique IDs */
     uint32_t max_local_id = 0;
@@ -101,69 +112,79 @@ SyncResult sync_merge(Vault *local, const Vault *remote,
         }
     }
 
-    /* Process each credential in the remote vault */
     for (uint32_t i = 0; i < remote->count; i++) {
         const Credential *remote_cred = &remote->entries[i];
 
-        /* Skip deleted entries from remote that we've never seen */
-        /* Find matching credential by URL + username (content-based match) */
-        Credential *local_cred = find_credential_by_content(local,
-                                                             remote_cred->url,
-                                                             remote_cred->username);
+        if (remote_cred->deleted) {
+            /* Remote says this entry is deleted. If we have a LIVE copy of the
+             * same entry, record it as a PENDING deletion for the user to
+             * confirm - do not apply it here. If we don't have it (or already
+             * deleted it), there is nothing to do. */
+            Credential *live = find_credential_by_content(local,
+                                                          remote_cred->url,
+                                                          remote_cred->username);
+            if (live && !live->deleted) {
+                if (summary->pending_delete_count < SYNC_MAX_PENDING_DELETES) {
+                    summary->pending_delete_ids[summary->pending_delete_count++] = live->id;
+                }
+            }
+            continue;
+        }
+
+        /* Remote entry is live. Match against any local entry (incl. deleted). */
+        Credential *local_cred = find_any_by_content(local,
+                                                     remote_cred->url,
+                                                     remote_cred->username);
 
         if (!local_cred) {
-            /* Credential not in local vault: add it with a new unique ID */
-            if (remote_cred->deleted) {
-                /* Don't add already-deleted entries we never had */
-                continue;
-            }
-
+            /* Not present locally: add it with a fresh unique ID. */
             Credential new_cred;
             memcpy(&new_cred, remote_cred, sizeof(Credential));
-            new_cred.id = ++max_local_id; /* Assign new unique ID */
-
+            new_cred.id = ++max_local_id;
             if (!vault_append_credential(local, &new_cred)) {
                 continue; /* Vault full */
             }
             summary->added++;
         } else {
-            /* Credential exists in both vaults: resolve conflict */
+            /* Present on both: newer non-deleted edit wins (ties -> initiator). */
             bool remote_wins = false;
-
             if (remote_cred->modified_at > local_cred->modified_at) {
                 remote_wins = true;
             } else if (remote_cred->modified_at == local_cred->modified_at) {
-                /* Identical timestamps: initiator wins (keep local) */
                 remote_wins = !is_initiator;
             }
 
             if (remote_wins) {
-                bool was_deleted = local_cred->deleted;
-                bool now_deleted = remote_cred->deleted;
-
-                /* Update local entry with remote data, keep local ID */
                 uint32_t saved_id = local_cred->id;
+                bool was_deleted = local_cred->deleted;
                 memcpy(local_cred, remote_cred, sizeof(Credential));
-                local_cred->id = saved_id; /* Preserve local ID */
+                local_cred->id = saved_id;
                 local->is_dirty = true;
-
-                if (!was_deleted && now_deleted) {
-                    summary->deleted++;
-                    if (summary->deleted_id_count < 100) {
-                        summary->deleted_ids[summary->deleted_id_count++] = saved_id;
-                    }
-                } else if (was_deleted && !now_deleted) {
-                    summary->updated++;
-                } else {
-                    summary->updated++;
-                }
+                /* Count as updated (this also "undeletes" a locally-deleted
+                 * entry that the other device revived with a newer edit). */
+                (void)was_deleted;
+                summary->updated++;
             }
         }
     }
 
-    if (summary->added > 0 || summary->updated > 0 || summary->deleted > 0) {
+    if (summary->added > 0 || summary->updated > 0) {
         local->is_dirty = true;
     }
 
     return SYNC_OK;
+}
+
+bool sync_apply_deletion(Vault *local, uint32_t id)
+{
+    if (!local || !local->entries) return false;
+    for (uint32_t i = 0; i < local->count; i++) {
+        if (local->entries[i].id == id && !local->entries[i].deleted) {
+            local->entries[i].deleted = true;
+            local->entries[i].modified_at = platform_time_unix();
+            local->is_dirty = true;
+            return true;
+        }
+    }
+    return false;
 }

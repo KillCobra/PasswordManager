@@ -56,6 +56,11 @@ uint32_t master_password_get_failure_count(void)
     return s_consecutive_failures;
 }
 
+void master_password_set_failure_count(uint32_t count)
+{
+    s_consecutive_failures = count;
+}
+
 /* ─── Additional Includes for CRUD and Clipboard ──────────────────────────── */
 
 #include <stdlib.h>

@@ -611,6 +611,15 @@ static bool UI_UnlockVault(HWND hwndParent)
     MasterPwDlgData dlg_data = {0};
     dlg_data.is_create = false;
 
+    /* Seed the lockout counter from the vault header so the progressive delay
+     * survives app restarts (persistent brute-force throttle). */
+    {
+        uint32_t persisted = 0;
+        if (store_read_lockout(g_app.vault_path, &persisted, NULL)) {
+            master_password_set_failure_count(persisted);
+        }
+    }
+
     while (1) {
         INT_PTR result = ShowMasterPasswordDialog(hwndParent, &dlg_data);
         if (result == IDCANCEL || !dlg_data.success) {
@@ -663,6 +672,8 @@ static bool UI_UnlockVault(HWND hwndParent)
 
         if (sr == STORE_OK) {
             master_password_record_success();
+            /* Clear the persisted lockout counter on success. */
+            store_write_lockout(g_app.vault_path, 0, 0);
             strncpy(g_app.master_password, dlg_data.password, MAX_PASSWORD_LEN);
             g_app.master_password[MAX_PASSWORD_LEN] = '\0';
             enc_secure_zero(dlg_data.password, sizeof(dlg_data.password));
@@ -670,6 +681,10 @@ static bool UI_UnlockVault(HWND hwndParent)
             return true;
         } else if (sr == STORE_ERR_AUTH) {
             master_password_record_failure_no_delay();
+            /* Persist the incremented counter so the lockout survives restart. */
+            store_write_lockout(g_app.vault_path,
+                                master_password_get_failure_count(),
+                                platform_time_unix());
             enc_secure_zero(dlg_data.password, sizeof(dlg_data.password));
             enc_secure_zero(&g_app.derived_key, sizeof(DerivedKey));
 
@@ -1037,23 +1052,32 @@ static void UI_StartSync(HWND hwndParent)
         return;
     }
 
-    if (summary.deleted > 0 && summary.deleted_id_count > 0) {
-        wchar_t del_msg[256];
-        _snwprintf_s(del_msg, 256, _TRUNCATE,
-                     L"The phone deleted %u credential(s).\nAccept deletions?",
-                     summary.deleted);
-        int confirm = MessageBoxW(hwndParent, del_msg, L"Confirm Deletions",
+    /* Restore the normal cursor before showing interactive prompts. */
+    SetCursor(hOldCursor);
+
+    /* Deletions are not auto-applied. For each entry deleted on the phone that
+     * still exists here, ask the user whether to delete it locally too. */
+    uint32_t confirmed_deletes = 0;
+    for (uint32_t i = 0; i < summary.pending_delete_count; i++) {
+        uint32_t id = summary.pending_delete_ids[i];
+        Credential *c = cred_get(&g_app.vault, id);
+        if (!c) continue;  /* already gone */
+
+        wchar_t *wurl = utf8_to_wide(c->url);
+        wchar_t *wuser = utf8_to_wide(c->username);
+        wchar_t del_msg[1024];
+        _snwprintf_s(del_msg, 1024, _TRUNCATE,
+                     L"This entry was deleted on the other device:\n\n"
+                     L"    %s\n    %s\n\nDelete it here too?",
+                     wurl ? wurl : L"", wuser ? wuser : L"");
+        free(wurl);
+        free(wuser);
+
+        int confirm = MessageBoxW(hwndParent, del_msg, L"Confirm Deletion",
                                   MB_YESNO | MB_ICONQUESTION);
-        if (confirm == IDNO) {
-            for (uint32_t i = 0; i < summary.deleted_id_count; i++) {
-                for (uint32_t j = 0; j < g_app.vault.count; j++) {
-                    if (g_app.vault.entries[j].id == summary.deleted_ids[i]) {
-                        g_app.vault.entries[j].deleted = false;
-                        g_app.vault.entries[j].modified_at = platform_time_unix();
-                        g_app.vault.is_dirty = true;
-                        break;
-                    }
-                }
+        if (confirm == IDYES) {
+            if (sync_apply_deletion(&g_app.vault, id)) {
+                confirmed_deletes++;
             }
         }
     }
@@ -1095,7 +1119,7 @@ static void UI_StartSync(HWND hwndParent)
     wchar_t summary_msg[256];
     _snwprintf_s(summary_msg, 256, _TRUNCATE,
                  L"Sync complete!\n\nAdded: %u\nUpdated: %u\nDeleted: %u",
-                 summary.added, summary.updated, summary.deleted);
+                 summary.added, summary.updated, confirmed_deletes);
     MessageBoxW(hwndParent, summary_msg, L"Sync Complete", MB_OK | MB_ICONINFORMATION);
     UI_RefreshCredentialList();
 }
