@@ -5,7 +5,10 @@ set -eu
 
 CC="${CC:-cc}"
 
-"$CC" -std=c11 -Wall -Wextra -DTEST_NO_MAIN \
+# Use gnu11 + _GNU_SOURCE so POSIX/GNU symbols used by the Linux platform layer
+# (popen, clock_gettime, nanosleep, getaddrinfo, MSG_NOSIGNAL, ...) are visible.
+# Strict -std=c11 hides these behind feature-test macros and the build fails.
+"$CC" -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -DTEST_NO_MAIN \
   -Iinclude -Ivendor/argon2 -Ivendor/aesgcm -Ivendor/theft \
   tests/test_main.c tests/test_encryption.c tests/test_credentials.c \
   tests/test_validation.c tests/test_sync.c tests/test_vault.c tests/test_crypto_kat.c \
