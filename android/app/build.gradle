@@ -16,9 +16,30 @@ android {
         }
     }
 
+    // A fixed, committed debug keystore so every build (local machine and CI)
+    // signs with the SAME key. Without this, each environment uses its own
+    // generated debug key and Android rejects in-place updates with
+    // "package conflicts with an existing package", forcing an uninstall that
+    // would delete the vault. Sharing one debug key lets app-debug.apk update
+    // in place and keep the existing vault data.
+    signingConfigs {
+        debug {
+            storeFile file("../debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
+            // Debug-signed for now so unsigned release builds still install.
+            // Replace with a real release keystore before publishing.
+            signingConfig signingConfigs.debug
         }
     }
 

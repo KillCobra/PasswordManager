@@ -3,41 +3,72 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="#1E1E2E">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <!-- Search bar -->
-        <LinearLayout
+        <!-- Top app bar -->
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="#181825"
+            app:title="Password Manager"
+            app:titleTextColor="#CDD6F4"
+            app:titleCentered="false" />
+
+        <!-- Search bar (hidden until the search FAB is tapped) -->
+        <com.google.android.material.card.MaterialCardView
             android:id="@+id/search_bar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="8dp"
-            android:visibility="gone">
+            android:layout_marginHorizontal="12dp"
+            android:layout_marginTop="10dp"
+            android:visibility="gone"
+            app:cardBackgroundColor="#252538"
+            app:cardCornerRadius="14dp"
+            app:cardElevation="0dp"
+            app:strokeColor="#3A3A54"
+            app:strokeWidth="1dp">
 
-            <EditText
-                android:id="@+id/edit_search"
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="Search by URL..."
-                android:inputType="text"
-                android:imeOptions="actionSearch"
-                android:importantForAutofill="no" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="8dp">
 
-            <ImageButton
-                android:id="@+id/btn_clear_search"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:src="@android:drawable/ic_menu_close_clear_cancel"
-                android:contentDescription="Clear search"
-                android:background="?attr/selectableItemBackgroundBorderless" />
+                <EditText
+                    android:id="@+id/edit_search"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:background="@null"
+                    android:hint="Search by URL..."
+                    android:textColor="#CDD6F4"
+                    android:textColorHint="#9AA2C0"
+                    android:paddingVertical="12dp"
+                    android:paddingHorizontal="8dp"
+                    android:inputType="text"
+                    android:imeOptions="actionSearch"
+                    android:importantForAutofill="no" />
 
-        </LinearLayout>
+                <ImageButton
+                    android:id="@+id/btn_clear_search"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:src="@android:drawable/ic_menu_close_clear_cancel"
+                    android:contentDescription="Clear search"
+                    app:tint="#9AA2C0"
+                    android:background="?attr/selectableItemBackgroundBorderless" />
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
 
         <!-- Credential list -->
         <ListView
@@ -45,7 +76,12 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:padding="8dp" />
+            android:layout_marginTop="6dp"
+            android:divider="@null"
+            android:dividerHeight="0dp"
+            android:scrollbarStyle="outsideOverlay"
+            android:clipToPadding="false"
+            android:paddingBottom="96dp" />
 
     </LinearLayout>
 
@@ -65,6 +101,8 @@
             android:layout_marginBottom="12dp"
             android:contentDescription="Search"
             android:src="@android:drawable/ic_menu_search"
+            app:backgroundTint="#252538"
+            app:tint="#89B4FA"
             app:fabSize="mini" />
 
         <com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -72,7 +110,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:contentDescription="Add credential"
-            android:src="@android:drawable/ic_input_add" />
+            android:src="@android:drawable/ic_input_add"
+            app:backgroundTint="#89B4FA"
+            app:tint="#11141F" />
 
     </LinearLayout>
 

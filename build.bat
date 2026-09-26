@@ -56,16 +56,31 @@ exit /b 1
 
 :build_msvc
 REM --- MSVC Build ---
-set CFLAGS=/nologo /std:c11 /W4 /D_CRT_SECURE_NO_WARNINGS
+set CFLAGS=/nologo /std:c11 /W4 /D_CRT_SECURE_NO_WARNINGS /DUNICODE /D_UNICODE
 if /i "%CONFIG%"=="debug" (
     set CFLAGS=%CFLAGS% /Zi /Od /DDEBUG
 ) else (
     set CFLAGS=%CFLAGS% /O2 /DNDEBUG
 )
-set LIBS=advapi32.lib ws2_32.lib user32.lib gdi32.lib bcrypt.lib
+set LIBS=advapi32.lib ws2_32.lib user32.lib gdi32.lib bcrypt.lib comctl32.lib dwmapi.lib
+
+REM --- Compile the icon resource (best-effort; skip if rc.exe unavailable) ---
+set RES=
+where rc.exe >nul 2>nul
+if %errorlevel%==0 (
+    echo Compiling resources with rc.exe...
+    rc.exe /nologo /fo app.res app.rc
+    if errorlevel 1 (
+        echo WARNING: resource compile failed, building without icon.
+    ) else (
+        set RES=app.res
+    )
+) else (
+    echo NOTE: rc.exe not found, building without embedded icon.
+)
 
 echo Compiling with MSVC (cl.exe)...
-cl.exe %CFLAGS% %INCLUDES% %ALL_SOURCES% /Fe:%OUTPUT% /link %LIBS%
+cl.exe %CFLAGS% %INCLUDES% %ALL_SOURCES% /Fe:%OUTPUT% /link %LIBS% %RES%
 if errorlevel 1 (
     echo BUILD FAILED
     exit /b 1
@@ -76,7 +91,7 @@ goto :end
 
 :build_mingw
 REM --- MinGW Build ---
-set CFLAGS=-std=c11 -Wall -Wextra
+set CFLAGS=-std=c11 -Wall -Wextra -DUNICODE -D_UNICODE
 set INCLUDES_GCC=-Iinclude -Ivendor/argon2 -Ivendor/aesgcm
 if /i "%CONFIG%"=="debug" (
     set CFLAGS=%CFLAGS% -g -O0 -DDEBUG
@@ -85,8 +100,23 @@ if /i "%CONFIG%"=="debug" (
 )
 set LIBS=-ladvapi32 -lws2_32 -luser32 -lgdi32 -lbcrypt -lcomctl32 -ldwmapi -mwindows
 
+REM --- Compile the icon resource (best-effort; skip if windres unavailable) ---
+set RES=
+where windres >nul 2>nul
+if %errorlevel%==0 (
+    echo Compiling resources with windres...
+    windres app.rc -O coff -o app_res.o
+    if errorlevel 1 (
+        echo WARNING: resource compile failed, building without icon.
+    ) else (
+        set RES=app_res.o
+    )
+) else (
+    echo NOTE: windres not found, building without embedded icon.
+)
+
 echo Compiling with MinGW (gcc)...
-gcc %CFLAGS% %INCLUDES_GCC% %ALL_SOURCES% -o %OUTPUT% %LIBS%
+gcc %CFLAGS% %INCLUDES_GCC% %ALL_SOURCES% %RES% -o %OUTPUT% %LIBS%
 if errorlevel 1 (
     echo BUILD FAILED
     exit /b 1

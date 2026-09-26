@@ -1,0 +1,6 @@
+// app.rc - Windows resources for the Password Manager desktop app.
+// Provides the branded application icon used by the window and taskbar.
+
+#define IDI_APPICON 101
+
+IDI_APPICON ICON "assets/app_icon.ico"

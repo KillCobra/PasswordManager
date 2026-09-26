@@ -15,6 +15,7 @@ import android.text.method.PasswordTransformationMethod;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.widget.ImageButton;
@@ -115,8 +116,30 @@ public class MainActivity extends Activity {
         searchBar.setVisibility(searchVisible ? View.VISIBLE : View.GONE);
         if (searchVisible) {
             editSearch.requestFocus();
+            showKeyboard(editSearch);
         } else {
             editSearch.setText("");
+            hideKeyboard(editSearch);
+        }
+    }
+
+    private void showKeyboard(View view) {
+        // Post so the view is laid out/focusable before we request the IME.
+        view.post(() -> {
+            view.requestFocus();
+            InputMethodManager imm =
+                    (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT);
+            }
+        });
+    }
+
+    private void hideKeyboard(View view) {
+        InputMethodManager imm =
+                (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm != null) {
+            imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
         }
     }
 
@@ -243,18 +266,27 @@ public class MainActivity extends Activity {
         editUsername.setText(ce.username);
         editPassword.setText(ce.password);
         editUrl.setEnabled(false);
-        editUsername.setEnabled(false);
-        editPassword.setEnabled(false);
+
+        // Username: read-only, tap to copy (keeps a clean 3-button action row
+        // while still offering "copy username").
+        editUsername.setEnabled(true);
+        editUsername.setFocusable(false);
+        editUsername.setFocusableInTouchMode(false);
+        editUsername.setCursorVisible(false);
+        editUsername.setLongClickable(false);
+        editUsername.setOnClickListener(v -> {
+            copyToClipboard(ce.username);
+            Toast.makeText(this, "Username copied", Toast.LENGTH_SHORT).show();
+        });
 
         // Mask the password with dots by default. Applying the transformation
         // method explicitly (rather than relying on inputType alone) ensures the
-        // field stays masked even though it is disabled/read-only here.
+        // field stays masked even though it is read-only here.
         editPassword.setInputType(InputType.TYPE_CLASS_TEXT
                 | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         editPassword.setTransformationMethod(PasswordTransformationMethod.getInstance());
 
-        // Let the user reveal/hide the password by tapping the field.
-        // Tapping toggles between masked dots and the plaintext value.
+        // Password: read-only; tap toggles reveal/hide.
         editPassword.setEnabled(true);
         editPassword.setFocusable(false);
         editPassword.setFocusableInTouchMode(false);
@@ -270,8 +302,12 @@ public class MainActivity extends Activity {
 
         new AlertDialog.Builder(this)
                 .setTitle("Credential Details")
+                .setMessage("Tap the username to copy it. Tap the password to reveal it.")
                 .setView(dialogView)
-                .setPositiveButton("Copy Password", (dialog, which) -> copyToClipboard(ce.password))
+                .setPositiveButton("Copy Password", (dialog, which) -> {
+                    copyToClipboard(ce.password);
+                    Toast.makeText(this, "Password copied", Toast.LENGTH_SHORT).show();
+                })
                 .setNeutralButton("Edit", (dialog, which) -> showEditDialog(position))
                 .setNegativeButton("Delete", (dialog, which) -> {
                     NativeLib.nativeDeleteCredential(ce.id);

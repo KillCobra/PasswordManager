@@ -8,6 +8,10 @@ android/gradlew text eol=lf
 # Windows batch scripts use CRLF
 *.bat           text eol=crlf
 
-# Treat vault files and the wrapper jar as binary (never line-ending munged)
+# Treat vault files, keystores, the wrapper jar, and images as binary
+# (never line-ending munged)
 *.vlt           binary
 *.jar           binary
+*.keystore      binary
+*.ico           binary
+*.png           binary
