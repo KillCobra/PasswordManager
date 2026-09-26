@@ -208,8 +208,17 @@ Java_com_passwordmanager_NativeLib_nativeUnlockVault(
     uint8_t salt[ENC_SALT_SIZE];
     memcpy(salt, file_data + 16, ENC_SALT_SIZE); /* salt at offset 16 */
 
+    /* Honor the KDF parameters stored in the header (iterations@7, memory@11,
+     * parallelism@15) rather than assuming the compile-time minimums. */
+    uint32_t hdr_iters = (uint32_t)file_data[7] | ((uint32_t)file_data[8] << 8) |
+                         ((uint32_t)file_data[9] << 16) | ((uint32_t)file_data[10] << 24);
+    uint32_t hdr_mem   = (uint32_t)file_data[11] | ((uint32_t)file_data[12] << 8) |
+                         ((uint32_t)file_data[13] << 16) | ((uint32_t)file_data[14] << 24);
+    uint8_t  hdr_par   = file_data[15];
+
     DerivedKey key;
-    EncResult er = enc_derive_key(password, pw_len, salt, &key);
+    EncResult er = enc_derive_key_params(password, pw_len, salt,
+                                         hdr_iters, hdr_mem, hdr_par, &key);
     platform_secure_zero(password, sizeof(password));
 
     if (er != ENC_OK) {

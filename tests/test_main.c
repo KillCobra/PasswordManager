@@ -15,16 +15,20 @@ extern int run_credential_tests(void);
 extern int run_validation_tests(void);
 extern int run_sync_tests(void);
 extern int run_vault_tests(void);
+extern int run_crypto_kat_tests(void);
 
 int main(void)
 {
     int total_failures = 0;
 
-    printf("╔══════════════════════════════════════════════════════════════╗\n");
-    printf("║  Cross-Platform Password Manager - Property Test Suite      ║\n");
-    printf("╚══════════════════════════════════════════════════════════════╝\n\n");
+    printf("==================================================================\n");
+    printf("  Cross-Platform Password Manager - Test Suite\n");
+    printf("==================================================================\n\n");
 
     /* Run all test suites */
+    total_failures += run_crypto_kat_tests();
+    printf("\n");
+
     total_failures += run_encryption_tests();
     printf("\n");
 
@@ -41,13 +45,13 @@ int main(void)
     printf("\n");
 
     /* Summary */
-    printf("══════════════════════════════════════════════════════════════\n");
+    printf("==================================================================\n");
     if (total_failures == 0) {
         printf("  ALL TESTS PASSED\n");
     } else {
         printf("  TOTAL FAILURES: %d\n", total_failures);
     }
-    printf("══════════════════════════════════════════════════════════════\n");
+    printf("==================================================================\n");
 
     return total_failures == 0 ? 0 : 1;
 }

@@ -2,13 +2,10 @@
 """
 Generate raster icon assets from the shared icon design.
 
-Draws the same padlock-on-dark-tile design as assets/icon.svg using Pillow,
-then writes:
+Draws the same padlock-on-dark-tile design used by the Android adaptive icon
+foreground (assets/icon.svg), then writes:
   - assets/app_icon.ico          (multi-size Windows icon for the desktop app)
   - assets/icon-<size>.png       (reference PNGs)
-
-The Android app uses vector drawables (see android/.../drawable), so it does
-not consume these PNGs, but they are handy for stores/readme.
 
 Run: python assets/make_icons.py
 """
@@ -18,17 +15,18 @@ from PIL import Image, ImageDraw
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Palette (matches icon.svg)
+# Palette
 BG_TOP = (37, 37, 64)      # #252540
 BG_BOT = (24, 24, 37)      # #181825
-LOCK_TOP = (156, 193, 255) # #9CC1FF
-LOCK_BOT = (110, 155, 240) # #6E9BF0
-SHACKLE = (137, 180, 250)  # #89B4FA
+ACCENT = (137, 180, 250)   # #89B4FA
 HOLE = (30, 30, 46)        # #1E1E2E
+
+# Icon geometry is defined on a 108-unit grid to match the Android foreground,
+# then scaled to the target size.
+GRID = 108.0
 
 
 def _vgrad(size, top, bot):
-    """Vertical gradient image."""
     img = Image.new("RGB", (1, size))
     for y in range(size):
         t = y / max(1, size - 1)
@@ -37,42 +35,36 @@ def _vgrad(size, top, bot):
 
 
 def render(size):
-    """Render the icon at the given square size on a supersampled canvas."""
-    S = size * 4  # supersample for smooth edges
-    scale = S / 512.0
+    S = size * 4  # supersample
+    scale = S / GRID
 
-    def sc(v):
+    def u(v):
+        return v * scale
+
+    def ui(v):
         return int(round(v * scale))
 
-    # Background rounded tile
     canvas = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     grad = _vgrad(S, BG_TOP, BG_BOT).convert("RGBA")
     mask = Image.new("L", (S, S), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, S - 1, S - 1], radius=sc(112), fill=255)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, S - 1, S - 1], radius=ui(24), fill=255)
     canvas.paste(grad, (0, 0), mask)
 
     draw = ImageDraw.Draw(canvas)
 
-    # Shackle: an arch drawn as a thick arc + two vertical legs
-    sw = sc(34)
-    # Arc bounding box for the semicircle top (center x=256, radius ~80)
-    draw.arc([sc(176), sc(100), sc(336), sc(260)], start=180, end=360,
-             fill=SHACKLE, width=sw)
-    # Legs down to the lock body top
-    draw.line([sc(176), sc(180), sc(176), sc(232)], fill=SHACKLE, width=sw)
-    draw.line([sc(336), sc(180), sc(336), sc(232)], fill=SHACKLE, width=sw)
+    # Shackle: arch (semicircle) + legs, matching the Android art (x 42..66).
+    # Center x=54, outer radius ~12 (46..66 -> radius 12 from center 54... use 12).
+    draw.arc([ui(42), ui(30), ui(66), ui(54)], start=180, end=360,
+             fill=ACCENT, width=ui(4))
+    draw.line([ui(44), u(42), ui(44), u(52)], fill=ACCENT, width=ui(4))
+    draw.line([ui(64), u(42), ui(64), u(52)], fill=ACCENT, width=ui(4))
 
-    # Lock body (gradient rounded rect)
-    body = _vgrad(S, LOCK_TOP, LOCK_BOT).convert("RGBA")
-    body_mask = Image.new("L", (S, S), 0)
-    ImageDraw.Draw(body_mask).rounded_rectangle(
-        [sc(140), sc(228), sc(372), sc(416)], radius=sc(34), fill=255)
-    canvas.paste(body, (0, 0), body_mask)
+    # Lock body: rounded rect x 34..74, y 52..80
+    draw.rounded_rectangle([ui(34), ui(52), ui(74), ui(80)], radius=ui(4), fill=ACCENT)
 
-    draw = ImageDraw.Draw(canvas)
-    # Keyhole
-    draw.ellipse([sc(226), sc(274), sc(286), sc(334)], fill=HOLE)
-    draw.rounded_rectangle([sc(244), sc(318), sc(268), sc(376)], radius=sc(12), fill=HOLE)
+    # Keyhole: circle + stem
+    draw.ellipse([ui(50), ui(60), ui(58), ui(68)], fill=HOLE)
+    draw.rounded_rectangle([ui(52), ui(66), ui(56), ui(74)], radius=ui(2), fill=HOLE)
 
     return canvas.resize((size, size), Image.LANCZOS)
 
@@ -82,16 +74,12 @@ def main():
     images = [render(s) for s in sizes]
 
     ico_path = os.path.join(OUT_DIR, "app_icon.ico")
-    # Save multi-resolution ICO from the largest image.
-    images[-1].save(ico_path, format="ICO",
-                    sizes=[(s, s) for s in sizes])
+    images[-1].save(ico_path, format="ICO", sizes=[(s, s) for s in sizes])
     print("wrote", ico_path)
 
     for s in (256, 512):
-        png = render(s)
-        p = os.path.join(OUT_DIR, f"icon-{s}.png")
-        png.save(p, format="PNG")
-        print("wrote", p)
+        render(s).save(os.path.join(OUT_DIR, f"icon-{s}.png"), format="PNG")
+        print("wrote", os.path.join(OUT_DIR, f"icon-{s}.png"))
 
 
 if __name__ == "__main__":

@@ -634,11 +634,22 @@ static bool UI_UnlockVault(HWND hwndParent)
             return false;
         }
 
+        /* Read the KDF parameters and salt stored in the vault header so we
+         * derive the key exactly as it was written (honoring higher-cost
+         * vaults, not just the compile-time minimums). Header layout:
+         * iterations@7 (u32 LE), memory_kb@11 (u32 LE), parallelism@15, salt@16. */
+        uint32_t hdr_iters = (uint32_t)file_data[7] | ((uint32_t)file_data[8] << 8) |
+                             ((uint32_t)file_data[9] << 16) | ((uint32_t)file_data[10] << 24);
+        uint32_t hdr_mem   = (uint32_t)file_data[11] | ((uint32_t)file_data[12] << 8) |
+                             ((uint32_t)file_data[13] << 16) | ((uint32_t)file_data[14] << 24);
+        uint8_t  hdr_par   = file_data[15];
+
         uint8_t salt[ENC_SALT_SIZE];
         memcpy(salt, file_data + 16, ENC_SALT_SIZE);
 
-        EncResult er = enc_derive_key(dlg_data.password, strlen(dlg_data.password),
-                                      salt, &g_app.derived_key);
+        EncResult er = enc_derive_key_params(dlg_data.password, strlen(dlg_data.password),
+                                             salt, hdr_iters, hdr_mem, hdr_par,
+                                             &g_app.derived_key);
         if (er != ENC_OK) {
             free(file_data);
             MessageBoxW(hwndParent, L"Key derivation failed.",
@@ -976,12 +987,18 @@ static void UI_StartSync(HWND hwndParent)
         return;
     }
 
+    uint32_t r_iters = (uint32_t)remote_data[7] | ((uint32_t)remote_data[8] << 8) |
+                       ((uint32_t)remote_data[9] << 16) | ((uint32_t)remote_data[10] << 24);
+    uint32_t r_mem   = (uint32_t)remote_data[11] | ((uint32_t)remote_data[12] << 8) |
+                       ((uint32_t)remote_data[13] << 16) | ((uint32_t)remote_data[14] << 24);
+    uint8_t  r_par   = remote_data[15];
+
     uint8_t remote_salt[ENC_SALT_SIZE];
     memcpy(remote_salt, remote_data + 16, ENC_SALT_SIZE);
 
     DerivedKey remote_key;
-    EncResult enc_res = enc_derive_key(g_app.master_password, strlen(g_app.master_password),
-                                       remote_salt, &remote_key);
+    EncResult enc_res = enc_derive_key_params(g_app.master_password, strlen(g_app.master_password),
+                                              remote_salt, r_iters, r_mem, r_par, &remote_key);
     if (enc_res != ENC_OK) {
         SetCursor(hOldCursor);
         free(remote_data);

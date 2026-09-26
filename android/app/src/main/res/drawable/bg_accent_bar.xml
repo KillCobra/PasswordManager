@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Small rounded accent bar shown at the left of each credential card. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#89B4FA" />
+    <corners android:radius="2dp" />
+</shape>

@@ -14,8 +14,10 @@
 
 /* ─── Key Derivation ──────────────────────────────────────────────────────── */
 
-EncResult enc_derive_key(const char *password, size_t pw_len,
-                         const uint8_t salt[ENC_SALT_SIZE], DerivedKey *out)
+EncResult enc_derive_key_params(const char *password, size_t pw_len,
+                                const uint8_t salt[ENC_SALT_SIZE],
+                                uint32_t iterations, uint32_t memory_kb,
+                                uint8_t parallelism, DerivedKey *out)
 {
     int result;
 
@@ -27,10 +29,15 @@ EncResult enc_derive_key(const char *password, size_t pw_len,
         return ENC_ERR_INVALID_PASSWORD;
     }
 
-    /* Set KDF parameters with enforced minimums */
-    out->iterations  = ENC_MIN_ITERATIONS;
-    out->memory_kb   = ENC_MIN_MEMORY_KB;
-    out->parallelism = ENC_PARALLELISM;
+    /* Clamp each parameter UP to its minimum floor so a vault can never be
+     * opened with weaker-than-minimum KDF settings. */
+    if (iterations < ENC_MIN_ITERATIONS) iterations = ENC_MIN_ITERATIONS;
+    if (memory_kb  < ENC_MIN_MEMORY_KB)  memory_kb  = ENC_MIN_MEMORY_KB;
+    if (parallelism < ENC_PARALLELISM)   parallelism = ENC_PARALLELISM;
+
+    out->iterations  = iterations;
+    out->memory_kb   = memory_kb;
+    out->parallelism = parallelism;
 
     /* Copy salt into output structure */
     memcpy(out->salt, salt, ENC_SALT_SIZE);
@@ -58,6 +65,16 @@ EncResult enc_derive_key(const char *password, size_t pw_len,
     }
 
     return ENC_OK;
+}
+
+EncResult enc_derive_key(const char *password, size_t pw_len,
+                         const uint8_t salt[ENC_SALT_SIZE], DerivedKey *out)
+{
+    /* Convenience wrapper: derive using the enforced minimum parameters.
+     * Existing callers (new-vault creation) keep the same behavior. */
+    return enc_derive_key_params(password, pw_len, salt,
+                                 ENC_MIN_ITERATIONS, ENC_MIN_MEMORY_KB,
+                                 ENC_PARALLELISM, out);
 }
 
 /* ─── Encryption ──────────────────────────────────────────────────────────── */

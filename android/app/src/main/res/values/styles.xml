@@ -2,8 +2,11 @@
 <resources>
 
     <!--
-      Forced dark theme, sharing the desktop palette:
+      Forced dark theme sharing the desktop palette:
         background #1E1E2E, surface #252538, accent #89B4FA, text #CDD6F4.
+      Based on Theme.MaterialComponents so the FloatingActionButtons render,
+      while the rest of the UI uses plain views + shape drawables (so it
+      inflates safely from a framework Activity).
     -->
     <style name="AppTheme" parent="Theme.MaterialComponents.NoActionBar">
         <item name="colorPrimary">#89B4FA</item>
@@ -22,34 +25,6 @@
         <item name="android:statusBarColor">#181825</item>
         <item name="android:navigationBarColor">#181825</item>
         <item name="android:windowLightStatusBar">false</item>
-
-        <!-- Rounded shape appearance for cards, dialogs, buttons -->
-        <item name="shapeAppearanceSmallComponent">@style/Shape.Rounded.Small</item>
-        <item name="shapeAppearanceMediumComponent">@style/Shape.Rounded.Medium</item>
-        <item name="materialAlertDialogTheme">@style/AppTheme.Dialog</item>
-    </style>
-
-    <style name="Shape.Rounded.Small" parent="ShapeAppearance.MaterialComponents.SmallComponent">
-        <item name="cornerFamily">rounded</item>
-        <item name="cornerSize">10dp</item>
-    </style>
-
-    <style name="Shape.Rounded.Medium" parent="ShapeAppearance.MaterialComponents.MediumComponent">
-        <item name="cornerFamily">rounded</item>
-        <item name="cornerSize">16dp</item>
-    </style>
-
-    <style name="AppTheme.Dialog" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
-        <item name="android:background">#252538</item>
-        <item name="colorSurface">#252538</item>
-        <item name="colorOnSurface">#CDD6F4</item>
-        <item name="buttonBarPositiveButtonStyle">@style/AppTheme.Dialog.Button</item>
-        <item name="buttonBarNegativeButtonStyle">@style/AppTheme.Dialog.Button</item>
-        <item name="buttonBarNeutralButtonStyle">@style/AppTheme.Dialog.Button</item>
-    </style>
-
-    <style name="AppTheme.Dialog.Button" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
-        <item name="android:textColor">#89B4FA</item>
     </style>
 
 </resources>

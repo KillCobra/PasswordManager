@@ -70,6 +70,31 @@ EncResult enc_derive_key(const char *password, size_t pw_len,
                          const uint8_t salt[ENC_SALT_SIZE], DerivedKey *out);
 
 /**
+ * Derive a 256-bit key using explicit Argon2id parameters.
+ *
+ * Like enc_derive_key(), but uses the provided iterations / memory / parallelism
+ * instead of the compile-time minimums. Each parameter is clamped UP to the
+ * corresponding ENC_MIN_* floor (and parallelism to at least 1) so a vault can
+ * never be opened with weaker-than-minimum settings. This lets the vault header
+ * describe (and later increase) the KDF cost while staying backward compatible:
+ * existing vaults already store the minimums, so they derive identically.
+ *
+ * @param password     Master password bytes
+ * @param pw_len       Length of password in bytes
+ * @param salt         128-bit (16-byte) salt
+ * @param iterations   Argon2id time cost (clamped up to ENC_MIN_ITERATIONS)
+ * @param memory_kb    Argon2id memory cost KB (clamped up to ENC_MIN_MEMORY_KB)
+ * @param parallelism  Argon2id parallelism (clamped up to 1)
+ * @param out          Output DerivedKey (key + the params actually used)
+ * @return ENC_OK on success, ENC_ERR_INVALID_PASSWORD if inputs invalid,
+ *         ENC_ERR_MEMORY on allocation failure
+ */
+EncResult enc_derive_key_params(const char *password, size_t pw_len,
+                                const uint8_t salt[ENC_SALT_SIZE],
+                                uint32_t iterations, uint32_t memory_kb,
+                                uint8_t parallelism, DerivedKey *out);
+
+/**
  * Encrypt plaintext using AES-256-GCM.
  *
  * Generates a random 12-byte nonce via platform_random_bytes() and produces

@@ -1,0 +1,39 @@
+name: C Tests
+
+# Builds and runs the C unit/property test suite on Linux so regressions in the
+# core (encryption, vault format, credentials, validation, sync) are caught.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - "src/**"
+      - "include/**"
+      - "platform/**"
+      - "vendor/**"
+      - "tests/**"
+      - "build_tests.sh"
+      - ".github/workflows/tests.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "include/**"
+      - "platform/**"
+      - "vendor/**"
+      - "tests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  c-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build and run tests
+        run: |
+          chmod +x build_tests.sh
+          ./build_tests.sh

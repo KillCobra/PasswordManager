@@ -179,31 +179,42 @@ bool platform_clipboard_set(const char *text, size_t len)
         return false;
     }
 
+    /* The stored text is UTF-8. Convert to UTF-16 and place it on the
+     * clipboard as CF_UNICODETEXT so non-ASCII characters (accents, symbols,
+     * non-Latin scripts) are preserved instead of being mangled by the ANSI
+     * code page (which CF_TEXT would use). */
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, text, (int)len, NULL, 0);
+    if (wlen < 0) {
+        return false;
+    }
+
     if (!OpenClipboard(NULL)) {
         return false;
     }
 
     EmptyClipboard();
 
-    /* Allocate global memory for clipboard (len + 1 for null terminator) */
-    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, len + 1);
+    /* Allocate room for the wide text plus a null terminator. */
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, ((size_t)wlen + 1) * sizeof(wchar_t));
     if (!hMem) {
         CloseClipboard();
         return false;
     }
 
-    char *pMem = (char *)GlobalLock(hMem);
+    wchar_t *pMem = (wchar_t *)GlobalLock(hMem);
     if (!pMem) {
         GlobalFree(hMem);
         CloseClipboard();
         return false;
     }
 
-    memcpy(pMem, text, len);
-    pMem[len] = '\0';
+    if (wlen > 0) {
+        MultiByteToWideChar(CP_UTF8, 0, text, (int)len, pMem, wlen);
+    }
+    pMem[wlen] = L'\0';
     GlobalUnlock(hMem);
 
-    if (!SetClipboardData(CF_TEXT, hMem)) {
+    if (!SetClipboardData(CF_UNICODETEXT, hMem)) {
         GlobalFree(hMem);
         CloseClipboard();
         return false;
