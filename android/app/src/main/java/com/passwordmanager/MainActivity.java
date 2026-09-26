@@ -7,11 +7,14 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
 import android.text.method.HideReturnsTransformationMethod;
 import android.text.method.PasswordTransformationMethod;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,8 +24,12 @@ import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
@@ -180,29 +187,75 @@ public class MainActivity extends Activity {
                         showMasterPasswordDialog();
                         return;
                     }
-
-                    boolean success;
-                    if (!vaultExists) {
-                        success = NativeLib.nativeCreateVault(vaultPath, password);
-                        if (success) {
-                            success = NativeLib.nativeUnlockVault(vaultPath, password);
-                        }
-                    } else {
-                        success = NativeLib.nativeUnlockVault(vaultPath, password);
-                    }
-
-                    if (success) {
-                        listView.setVisibility(View.VISIBLE);
-                        fabAdd.setVisibility(View.VISIBLE);
-                        fabSearch.setVisibility(View.VISIBLE);
-                        refreshCredentials();
-                    } else {
-                        Toast.makeText(this, "Failed to unlock vault", Toast.LENGTH_SHORT).show();
-                        showMasterPasswordDialog();
-                    }
+                    hideKeyboard(editPassword);
+                    unlockWithLoader(password, vaultExists);
                 })
                 .setNegativeButton("Exit", (dialog, which) -> finish())
                 .show();
+    }
+
+    /**
+     * Run vault creation/unlock off the UI thread while showing a loader, so the
+     * user gets immediate feedback that their tap registered (Argon2id key
+     * derivation takes a moment) rather than a frozen screen.
+     */
+    private void unlockWithLoader(String password, boolean vaultExists) {
+        AlertDialog loader = buildLoaderDialog(vaultExists ? "Unlocking vault..." : "Creating vault...");
+        loader.show();
+
+        ExecutorService exec = Executors.newSingleThreadExecutor();
+        Handler main = new Handler(Looper.getMainLooper());
+        exec.execute(() -> {
+            boolean success;
+            if (!vaultExists) {
+                success = NativeLib.nativeCreateVault(vaultPath, password);
+                if (success) {
+                    success = NativeLib.nativeUnlockVault(vaultPath, password);
+                }
+            } else {
+                success = NativeLib.nativeUnlockVault(vaultPath, password);
+            }
+            final boolean ok = success;
+            main.post(() -> {
+                loader.dismiss();
+                if (ok) {
+                    listView.setVisibility(View.VISIBLE);
+                    fabAdd.setVisibility(View.VISIBLE);
+                    fabSearch.setVisibility(View.VISIBLE);
+                    refreshCredentials();
+                } else {
+                    Toast.makeText(this, "Incorrect password or vault error", Toast.LENGTH_SHORT).show();
+                    showMasterPasswordDialog();
+                }
+            });
+            exec.shutdown();
+        });
+    }
+
+    /** A small non-cancelable dialog with a spinner + message. */
+    private AlertDialog buildLoaderDialog(String message) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        int pad = (int) (24 * getResources().getDisplayMetrics().density);
+        row.setPadding(pad, pad, pad, pad);
+
+        ProgressBar spinner = new ProgressBar(this);
+        int sz = (int) (28 * getResources().getDisplayMetrics().density);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(sz, sz);
+        sp.rightMargin = pad;
+        row.addView(spinner, sp);
+
+        TextView tv = new TextView(this);
+        tv.setText(message);
+        tv.setTextColor(0xFFCDD6F4);
+        tv.setTextSize(16);
+        row.addView(tv);
+
+        return new AlertDialog.Builder(this)
+                .setView(row)
+                .setCancelable(false)
+                .create();
     }
 
     /* ─── Credential Management ───────────────────────────────────────────── */

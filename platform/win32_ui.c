@@ -449,6 +449,92 @@ static void UI_LockVault(void)
     }
 }
 
+/* ─── Busy / "Unlocking..." Indicator ─────────────────────────────────────── */
+
+static HWND g_busy_hwnd = NULL;
+
+static LRESULT CALLBACK BusyWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rc; GetClientRect(hwnd, &rc);
+        HBRUSH bg = CreateSolidBrush(CLR_SURFACE);
+        FillRect(hdc, &rc, bg);
+        DeleteObject(bg);
+        /* Accent border */
+        HPEN pen = CreatePen(PS_SOLID, 1, CLR_ACCENT);
+        HPEN oldPen = (HPEN)SelectObject(hdc, pen);
+        HBRUSH oldBr = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        Rectangle(hdc, 0, 0, rc.right, rc.bottom);
+        SelectObject(hdc, oldPen); SelectObject(hdc, oldBr);
+        DeleteObject(pen);
+
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, CLR_TEXT);
+        HFONT oldFont = (HFONT)SelectObject(hdc, g_app.hfont_ui ? g_app.hfont_ui : (HFONT)GetStockObject(DEFAULT_GUI_FONT));
+        const wchar_t *txt = (const wchar_t *)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        DrawTextW(hdc, txt ? txt : L"Working...", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(hdc, oldFont);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+/* Show a small centered "Unlocking..." popup and paint it immediately so the
+ * user sees that their action registered before the (blocking) Argon2id key
+ * derivation runs. */
+static void UI_ShowBusy(HWND parent, const wchar_t *text)
+{
+    static bool registered = false;
+    HINSTANCE hInst = GetModuleHandle(NULL);
+    if (!registered) {
+        WNDCLASSEXW wc = {0};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = BusyWndProc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursor(NULL, IDC_WAIT);
+        wc.lpszClassName = L"PMBusyWindow";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+
+    int w = 260, h = 90;
+    int x, y;
+    RECT pr;
+    if (parent && GetWindowRect(parent, &pr)) {
+        x = pr.left + ((pr.right - pr.left) - w) / 2;
+        y = pr.top + ((pr.bottom - pr.top) - h) / 2;
+    } else {
+        int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
+        x = (sw - w) / 2; y = (sh - h) / 2;
+    }
+
+    g_busy_hwnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"PMBusyWindow", L"",
+        WS_POPUP, x, y, w, h, parent, NULL, hInst, NULL);
+    if (g_busy_hwnd) {
+        SetWindowLongPtrW(g_busy_hwnd, GWLP_USERDATA, (LONG_PTR)text);
+        ShowWindow(g_busy_hwnd, SW_SHOWNOACTIVATE);
+        UpdateWindow(g_busy_hwnd);   /* force immediate paint */
+        SetCursor(LoadCursor(NULL, IDC_WAIT));
+    }
+}
+
+static void UI_HideBusy(void)
+{
+    if (g_busy_hwnd) {
+        DestroyWindow(g_busy_hwnd);
+        g_busy_hwnd = NULL;
+    }
+    SetCursor(LoadCursor(NULL, IDC_ARROW));
+}
+
 /* ─── Responsive Wait (keeps UI painting during auth delay) ───────────────── */
 
 static void UI_ResponsiveWait(uint32_t ms)
@@ -656,10 +742,15 @@ static bool UI_UnlockVault(HWND hwndParent)
         uint8_t salt[ENC_SALT_SIZE];
         memcpy(salt, file_data + 16, ENC_SALT_SIZE);
 
+        /* Show an "Unlocking..." indicator before the (blocking) Argon2id key
+         * derivation so the user sees their Unlock press registered. */
+        UI_ShowBusy(hwndParent, L"Unlocking vault...");
+
         EncResult er = enc_derive_key_params(dlg_data.password, strlen(dlg_data.password),
                                              salt, hdr_iters, hdr_mem, hdr_par,
                                              &g_app.derived_key);
         if (er != ENC_OK) {
+            UI_HideBusy();
             free(file_data);
             MessageBoxW(hwndParent, L"Key derivation failed.",
                         L"Error", MB_OK | MB_ICONERROR);
@@ -669,6 +760,7 @@ static bool UI_UnlockVault(HWND hwndParent)
 
         sr = vault_deserialize(file_data, file_len, &g_app.derived_key, &g_app.vault);
         free(file_data);
+        UI_HideBusy();
 
         if (sr == STORE_OK) {
             master_password_record_success();
@@ -724,6 +816,7 @@ static bool UI_CreateNewVault(HWND hwndParent)
         return false;
     }
 
+    UI_ShowBusy(hwndParent, L"Creating vault...");
     EncResult er = enc_derive_key(dlg_data.password, strlen(dlg_data.password),
                                   salt, &g_app.derived_key);
     strncpy(g_app.master_password, dlg_data.password, MAX_PASSWORD_LEN);
@@ -731,6 +824,7 @@ static bool UI_CreateNewVault(HWND hwndParent)
     enc_secure_zero(dlg_data.password, sizeof(dlg_data.password));
 
     if (er != ENC_OK) {
+        UI_HideBusy();
         MessageBoxW(hwndParent, L"Key derivation failed.",
                     L"Error", MB_OK | MB_ICONERROR);
         return false;
@@ -738,6 +832,7 @@ static bool UI_CreateNewVault(HWND hwndParent)
 
     g_app.vault.entries = (Credential *)calloc(MAX_CREDENTIALS, sizeof(Credential));
     if (!g_app.vault.entries) {
+        UI_HideBusy();
         MessageBoxW(hwndParent, L"Memory allocation failed.",
                     L"Error", MB_OK | MB_ICONERROR);
         return false;
@@ -746,6 +841,7 @@ static bool UI_CreateNewVault(HWND hwndParent)
     g_app.vault.capacity = MAX_CREDENTIALS;
     g_app.vault.is_dirty = true;
     UI_AutoSave();
+    UI_HideBusy();
     g_app.is_unlocked = true;
     return true;
 }

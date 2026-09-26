@@ -14,21 +14,6 @@
 /* ─── Internal Helpers ────────────────────────────────────────────────────── */
 
 /**
- * Find a credential in the vault by ID.
- * Returns pointer to the credential or NULL if not found.
- */
-static Credential* find_credential_by_id(Vault *vault, uint32_t id)
-{
-    if (!vault || !vault->entries) return NULL;
-    for (uint32_t i = 0; i < vault->count; i++) {
-        if (vault->entries[i].id == id) {
-            return &vault->entries[i];
-        }
-    }
-    return NULL;
-}
-
-/**
  * Find a credential in the vault by URL + username (case-sensitive match).
  * This is used for merge to identify "same" credentials across devices
  * that may have different IDs.
