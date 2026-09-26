@@ -49,6 +49,8 @@ public class MainActivity extends Activity {
     private CredentialAdapter adapter;
     private final List<CredentialEntry> credentials = new ArrayList<>();
     private boolean searchVisible = false;
+    private boolean vaultUnlocked = false;   // is the native vault currently unlocked?
+    private boolean unlockPromptShowing = false; // guard against double prompts
 
     private static class CredentialEntry {
         int id;
@@ -107,13 +109,32 @@ public class MainActivity extends Activity {
         fabAdd.setVisibility(View.GONE);
         fabSearch.setVisibility(View.GONE);
 
-        showMasterPasswordDialog();
+        // The unlock prompt is driven from onStart() (see below) so that
+        // returning from the background re-prompts, while a rotation (which no
+        // longer recreates the Activity thanks to android:configChanges) keeps
+        // the vault unlocked without prompting again.
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        // Prompt for the master password whenever the vault is locked (fresh
+        // launch, or returning from the background after onStop locked it).
+        if (!vaultUnlocked && !unlockPromptShowing) {
+            showMasterPasswordDialog();
+        }
     }
 
     @Override
     protected void onStop() {
         super.onStop();
+        // Lock the vault when the app goes to the background for security.
         NativeLib.nativeLockVault();
+        vaultUnlocked = false;
+        // Hide sensitive UI so it isn't shown before the next unlock.
+        listView.setVisibility(View.GONE);
+        fabAdd.setVisibility(View.GONE);
+        fabSearch.setVisibility(View.GONE);
     }
 
     /* ─── Search ──────────────────────────────────────────────────────────── */
@@ -171,6 +192,7 @@ public class MainActivity extends Activity {
     /* ─── Master Password ─────────────────────────────────────────────────── */
 
     private void showMasterPasswordDialog() {
+        unlockPromptShowing = true;
         View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_master_password, null);
         EditText editPassword = dialogView.findViewById(R.id.edit_master_password);
 
@@ -219,6 +241,8 @@ public class MainActivity extends Activity {
             main.post(() -> {
                 loader.dismiss();
                 if (ok) {
+                    unlockPromptShowing = false;
+                    vaultUnlocked = true;
                     listView.setVisibility(View.VISIBLE);
                     fabAdd.setVisibility(View.VISIBLE);
                     fabSearch.setVisibility(View.VISIBLE);

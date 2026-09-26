@@ -1045,9 +1045,49 @@ static bool adb_run(const char *cmd, const char *output_file)
     return (exit_code == 0);
 }
 
+/* Check that a pulled file exists and looks like a vault (>= header size and
+ * correct magic). Returns true if it is a plausible vault file. */
+static bool file_looks_like_vault(const char *path)
+{
+    uint8_t *data = NULL;
+    size_t len = 0;
+    if (!platform_file_read(path, &data, &len)) return false;
+    bool ok = (len >= VAULT_HEADER_SIZE) &&
+              data && data[0] == VAULT_MAGIC_0 && data[1] == VAULT_MAGIC_1 &&
+              data[2] == VAULT_MAGIC_2 && data[3] == VAULT_MAGIC_3;
+    free(data);
+    return ok;
+}
+
+/*
+ * Pull the phone's vault to local_path.
+ *
+ * Primary method: stage the app-private vault to a shell-accessible temp path
+ * with `run-as ... cp`, then `adb pull` the staged copy (adb pull transfers the
+ * exact bytes, avoiding exec-out truncation/stderr-noise issues). Verify the
+ * result actually looks like a vault. Fall back to the original exec-out cat.
+ */
 static bool adb_pull_vault(const char *local_path)
 {
-    return adb_run("adb exec-out run-as com.passwordmanager cat files/vault.vlt", local_path);
+    /* Step 1: copy the app-private vault into /data/local/tmp (readable by the
+     * adb shell user) using run-as, so `adb pull` can fetch it. */
+    if (adb_run("adb shell run-as com.passwordmanager cp files/vault.vlt /data/local/tmp/vault_pull.vlt", NULL)) {
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd),
+                 "adb pull /data/local/tmp/vault_pull.vlt \"%s\"", local_path);
+        bool pulled = adb_run(cmd, NULL);
+        adb_run("adb shell rm -f /data/local/tmp/vault_pull.vlt", NULL); /* cleanup */
+        if (pulled && file_looks_like_vault(local_path)) {
+            return true;
+        }
+    }
+
+    /* Fallback: stream the file's bytes straight to the local file. */
+    if (adb_run("adb exec-out run-as com.passwordmanager cat files/vault.vlt", local_path)
+        && file_looks_like_vault(local_path)) {
+        return true;
+    }
+    return false;
 }
 
 static bool adb_push_vault(const char *local_path)
@@ -1067,12 +1107,13 @@ static void UI_StartSync(HWND hwndParent)
     if (!adb_pull_vault(remote_path)) {
         SetCursor(hOldCursor);
         MessageBoxW(hwndParent,
-                    L"Failed to pull vault from phone.\n\n"
+                    L"Could not get a valid vault from the phone.\n\n"
                     L"Make sure:\n"
-                    L"\u2022 Phone is connected via USB\n"
-                    L"\u2022 USB debugging is enabled\n"
+                    L"\u2022 Phone is connected via USB with USB debugging on\n"
                     L"\u2022 ADB is in your PATH\n"
-                    L"\u2022 The app is installed on the phone",
+                    L"\u2022 The app is installed on the phone\n"
+                    L"\u2022 You have opened the app and created/unlocked a vault\n"
+                    L"   at least once (so a vault file exists to sync)",
                     L"Sync Error", MB_OK | MB_ICONERROR);
         DeleteFileA(remote_path);
         return;
