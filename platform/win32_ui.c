@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <wchar.h>
 
 #include "credential.h"
@@ -1003,29 +1004,75 @@ static INT_PTR ShowCredentialDialog(HWND hwndParent, CredDlgData *data)
 
 /* ─── ADB USB Sync ────────────────────────────────────────────────────────── */
 
+/* Accumulates a human-readable diagnostic log of each ADB step for this sync
+ * attempt, so a failure can report exactly which command failed and what it
+ * printed. Reset at the start of each sync. */
+static char  g_sync_log[8192];
+static size_t g_sync_log_len = 0;
+
+static void sync_log_reset(void)
+{
+    g_sync_log[0] = '\0';
+    g_sync_log_len = 0;
+}
+
+static void sync_logf(const char *fmt, ...)
+{
+    if (g_sync_log_len >= sizeof(g_sync_log) - 1) return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(g_sync_log + g_sync_log_len,
+                      sizeof(g_sync_log) - g_sync_log_len, fmt, ap);
+    va_end(ap);
+    if (n > 0) {
+        g_sync_log_len += (size_t)n;
+        if (g_sync_log_len >= sizeof(g_sync_log)) g_sync_log_len = sizeof(g_sync_log) - 1;
+    }
+}
+
+/*
+ * Run an adb command.
+ *   - If output_file is set, the child's stdout is written there (binary-safe).
+ *   - The child's stderr (and stdout when not captured to a file) is captured
+ *     into a temp file and appended to the sync log along with the exit code,
+ *     so we can diagnose failures precisely.
+ * Returns true iff the process launched and exited with code 0.
+ */
 static bool adb_run(const char *cmd, const char *output_file)
 {
     SECURITY_ATTRIBUTES sa = {0};
     sa.nLength = sizeof(sa);
     sa.bInheritHandle = TRUE;
 
+    /* Temp file to capture stderr (+ stdout when not redirected to output_file). */
+    char err_path[MAX_PATH];
+    DWORD tlen = GetTempPathA(sizeof(err_path), err_path);
+    if (tlen == 0 || tlen > sizeof(err_path) - 16) strcpy(err_path, ".\\");
+    strncat(err_path, "pm_adb_err.txt", sizeof(err_path) - strlen(err_path) - 1);
+
+    HANDLE hErr = CreateFileA(err_path, GENERIC_WRITE, FILE_SHARE_READ, &sa,
+                              CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, NULL);
+
     HANDLE hStdOut = INVALID_HANDLE_VALUE;
     if (output_file) {
         hStdOut = CreateFileA(output_file, GENERIC_WRITE, 0, &sa,
                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (hStdOut == INVALID_HANDLE_VALUE) return false;
+        if (hStdOut == INVALID_HANDLE_VALUE) {
+            sync_logf("$ %s\n  -> ERROR: cannot create output file '%s'\n", cmd, output_file);
+            if (hErr != INVALID_HANDLE_VALUE) CloseHandle(hErr);
+            return false;
+        }
     }
 
     STARTUPINFOA si = {0};
     si.cb = sizeof(si);
-    if (output_file) {
-        si.dwFlags = STARTF_USESTDHANDLES;
-        si.hStdOutput = hStdOut;
-        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    }
-    PROCESS_INFORMATION pi = {0};
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    /* stdout: to output_file if given, else to the capture file. */
+    si.hStdOutput = (hStdOut != INVALID_HANDLE_VALUE) ? hStdOut : hErr;
+    si.hStdError  = hErr;
 
+    PROCESS_INFORMATION pi = {0};
     char cmd_buf[2048];
     strncpy(cmd_buf, cmd, sizeof(cmd_buf) - 1);
     cmd_buf[sizeof(cmd_buf) - 1] = '\0';
@@ -1033,16 +1080,46 @@ static bool adb_run(const char *cmd, const char *output_file)
     BOOL ok = CreateProcessA(NULL, cmd_buf, NULL, NULL, TRUE,
                              CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
     if (!ok) {
+        sync_logf("$ %s\n  -> ERROR: CreateProcess failed (adb not found on PATH?), GetLastError=%lu\n",
+                  cmd, (unsigned long)GetLastError());
         if (hStdOut != INVALID_HANDLE_VALUE) CloseHandle(hStdOut);
+        if (hErr != INVALID_HANDLE_VALUE) CloseHandle(hErr);
         return false;
     }
-    WaitForSingleObject(pi.hProcess, 30000);
+
+    DWORD wait = WaitForSingleObject(pi.hProcess, 30000);
     DWORD exit_code = 1;
-    GetExitCodeProcess(pi.hProcess, &exit_code);
+    if (wait == WAIT_TIMEOUT) {
+        TerminateProcess(pi.hProcess, 1);
+        sync_logf("$ %s\n  -> ERROR: timed out after 30s\n", cmd);
+    } else {
+        GetExitCodeProcess(pi.hProcess, &exit_code);
+    }
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     if (hStdOut != INVALID_HANDLE_VALUE) CloseHandle(hStdOut);
-    return (exit_code == 0);
+    if (hErr != INVALID_HANDLE_VALUE) CloseHandle(hErr);
+
+    /* Read back captured output (stderr, plus stdout when not to a file). */
+    char captured[512] = {0};
+    uint8_t *cap = NULL; size_t caplen = 0;
+    if (platform_file_read(err_path, &cap, &caplen) && cap && caplen > 0) {
+        size_t n = caplen < sizeof(captured) - 1 ? caplen : sizeof(captured) - 1;
+        memcpy(captured, cap, n);
+        captured[n] = '\0';
+        /* Trim trailing whitespace/newlines for a tidy log. */
+        while (n > 0 && (captured[n-1] == '\n' || captured[n-1] == '\r' || captured[n-1] == ' ')) {
+            captured[--n] = '\0';
+        }
+    }
+    free(cap);
+    DeleteFileA(err_path);
+
+    if (wait != WAIT_TIMEOUT) {
+        sync_logf("$ %s\n  -> exit=%lu%s%s\n", cmd, (unsigned long)exit_code,
+                  captured[0] ? " output=" : "", captured[0] ? captured : "");
+    }
+    return (wait != WAIT_TIMEOUT) && (exit_code == 0);
 }
 
 /* Check that a pulled file exists and looks like a vault (>= header size and
@@ -1067,25 +1144,47 @@ static bool file_looks_like_vault(const char *path)
  * exact bytes, avoiding exec-out truncation/stderr-noise issues). Verify the
  * result actually looks like a vault. Fall back to the original exec-out cat.
  */
+/* Report the size of a local file into the sync log (for diagnostics). */
+static void sync_log_file_size(const char *label, const char *path)
+{
+    uint8_t *d = NULL; size_t n = 0;
+    if (platform_file_read(path, &d, &n)) {
+        sync_logf("  [%s] %s size=%zu bytes%s\n", label, path, n,
+                  (n >= VAULT_HEADER_SIZE) ? "" : " (below header size!)");
+        free(d);
+    } else {
+        sync_logf("  [%s] %s could not be read\n", label, path);
+    }
+}
+
 static bool adb_pull_vault(const char *local_path)
 {
-    /* Step 1: copy the app-private vault into /data/local/tmp (readable by the
-     * adb shell user) using run-as, so `adb pull` can fetch it. */
+    /* Diagnostics: confirm the vault exists on the phone and its size. */
+    sync_logf("-- checking phone vault --\n");
+    adb_run("adb shell run-as com.passwordmanager ls -l files/vault.vlt", NULL);
+
+    /* Primary: copy the app-private vault into /data/local/tmp (readable by the
+     * adb shell user) using run-as, then `adb pull` the staged copy. */
+    sync_logf("-- primary pull (run-as cp + adb pull) --\n");
     if (adb_run("adb shell run-as com.passwordmanager cp files/vault.vlt /data/local/tmp/vault_pull.vlt", NULL)) {
         char cmd[512];
         snprintf(cmd, sizeof(cmd),
                  "adb pull /data/local/tmp/vault_pull.vlt \"%s\"", local_path);
         bool pulled = adb_run(cmd, NULL);
         adb_run("adb shell rm -f /data/local/tmp/vault_pull.vlt", NULL); /* cleanup */
-        if (pulled && file_looks_like_vault(local_path)) {
-            return true;
+        if (pulled) {
+            sync_log_file_size("primary", local_path);
+            if (file_looks_like_vault(local_path)) return true;
+            sync_logf("  primary result did not look like a valid vault (bad magic/size)\n");
         }
     }
 
     /* Fallback: stream the file's bytes straight to the local file. */
-    if (adb_run("adb exec-out run-as com.passwordmanager cat files/vault.vlt", local_path)
-        && file_looks_like_vault(local_path)) {
-        return true;
+    sync_logf("-- fallback pull (exec-out run-as cat) --\n");
+    if (adb_run("adb exec-out run-as com.passwordmanager cat files/vault.vlt", local_path)) {
+        sync_log_file_size("fallback", local_path);
+        if (file_looks_like_vault(local_path)) return true;
+        sync_logf("  fallback result did not look like a valid vault (bad magic/size)\n");
     }
     return false;
 }
@@ -1099,22 +1198,49 @@ static bool adb_push_vault(const char *local_path)
     return adb_run("adb shell run-as com.passwordmanager cp /data/local/tmp/vault_sync.vlt files/vault.vlt", NULL);
 }
 
+/* Write the accumulated sync log to sync_debug.log next to the exe and show an
+ * error dialog that includes the step-by-step diagnostics so failures can be
+ * debugged precisely. */
+static void UI_ShowSyncError(HWND hwndParent, const wchar_t *summary)
+{
+    /* Persist the full log to a file for later inspection. */
+    platform_file_write_atomic("sync_debug.log",
+                               (const uint8_t *)g_sync_log, g_sync_log_len);
+
+    /* Build a wide message: summary + the (possibly long) log tail. */
+    wchar_t *wlog = utf8_to_wide(g_sync_log);
+    size_t need = wcslen(summary) + (wlog ? wcslen(wlog) : 0) + 128;
+    wchar_t *msg = (wchar_t *)malloc(need * sizeof(wchar_t));
+    if (msg) {
+        _snwprintf_s(msg, need, _TRUNCATE,
+                     L"%s\n\nDiagnostic log (also saved to sync_debug.log):\n\n%s",
+                     summary, wlog ? wlog : L"(none)");
+        MessageBoxW(hwndParent, msg, L"Sync Error", MB_OK | MB_ICONERROR);
+        free(msg);
+    } else {
+        MessageBoxW(hwndParent, summary, L"Sync Error", MB_OK | MB_ICONERROR);
+    }
+    free(wlog);
+}
+
 static void UI_StartSync(HWND hwndParent)
 {
     HCURSOR hOldCursor = SetCursor(LoadCursor(NULL, IDC_WAIT));
     const char *remote_path = "sync_remote.vlt";
 
+    sync_log_reset();
+    sync_logf("=== Sync started ===\n");
+
     if (!adb_pull_vault(remote_path)) {
         SetCursor(hOldCursor);
-        MessageBoxW(hwndParent,
+        UI_ShowSyncError(hwndParent,
                     L"Could not get a valid vault from the phone.\n\n"
                     L"Make sure:\n"
                     L"\u2022 Phone is connected via USB with USB debugging on\n"
                     L"\u2022 ADB is in your PATH\n"
                     L"\u2022 The app is installed on the phone\n"
                     L"\u2022 You have opened the app and created/unlocked a vault\n"
-                    L"   at least once (so a vault file exists to sync)",
-                    L"Sync Error", MB_OK | MB_ICONERROR);
+                    L"   at least once (so a vault file exists to sync)");
         DeleteFileA(remote_path);
         return;
     }

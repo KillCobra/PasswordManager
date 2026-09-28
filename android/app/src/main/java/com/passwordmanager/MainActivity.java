@@ -51,6 +51,11 @@ public class MainActivity extends Activity {
     private boolean searchVisible = false;
     private boolean vaultUnlocked = false;   // is the native vault currently unlocked?
     private boolean unlockPromptShowing = false; // guard against double prompts
+    private long backgroundedAt = 0L;        // when the app last went to background (ms)
+
+    /** Auto-lock grace period: only re-lock/re-prompt if the app was in the
+     *  background longer than this. Quick app switches stay unlocked. */
+    private static final long AUTO_LOCK_MS = 60_000L;
 
     private static class CredentialEntry {
         int id;
@@ -118,8 +123,27 @@ public class MainActivity extends Activity {
     @Override
     protected void onStart() {
         super.onStart();
-        // Prompt for the master password whenever the vault is locked (fresh
-        // launch, or returning from the background after onStop locked it).
+
+        // If we were only briefly in the background (quick app switch), keep the
+        // vault unlocked so the user doesn't have to re-enter their password.
+        if (vaultUnlocked) {
+            long awayMs = (backgroundedAt == 0L) ? 0L : (System.currentTimeMillis() - backgroundedAt);
+            if (awayMs < AUTO_LOCK_MS) {
+                // Still within the grace period: restore the UI, no prompt.
+                listView.setVisibility(View.VISIBLE);
+                fabAdd.setVisibility(View.VISIBLE);
+                fabSearch.setVisibility(View.VISIBLE);
+                return;
+            }
+            // Over the grace period: lock now and fall through to prompt.
+            NativeLib.nativeLockVault();
+            vaultUnlocked = false;
+            listView.setVisibility(View.GONE);
+            fabAdd.setVisibility(View.GONE);
+            fabSearch.setVisibility(View.GONE);
+        }
+
+        // Prompt when the vault is locked (fresh launch, or after auto-lock).
         if (!vaultUnlocked && !unlockPromptShowing) {
             showMasterPasswordDialog();
         }
@@ -128,13 +152,22 @@ public class MainActivity extends Activity {
     @Override
     protected void onStop() {
         super.onStop();
-        // Lock the vault when the app goes to the background for security.
-        NativeLib.nativeLockVault();
-        vaultUnlocked = false;
-        // Hide sensitive UI so it isn't shown before the next unlock.
-        listView.setVisibility(View.GONE);
-        fabAdd.setVisibility(View.GONE);
-        fabSearch.setVisibility(View.GONE);
+        // Note when we went to the background. We do NOT lock immediately;
+        // onStart() decides whether enough time passed to require re-unlocking.
+        // This keeps quick app switches seamless while still auto-locking after
+        // the app has been away long enough.
+        backgroundedAt = System.currentTimeMillis();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // The Activity is really going away (not a rotation, thanks to
+        // configChanges) - lock the vault so decrypted data is cleared.
+        if (isFinishing()) {
+            NativeLib.nativeLockVault();
+            vaultUnlocked = false;
+        }
     }
 
     /* ─── Search ──────────────────────────────────────────────────────────── */
